@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>fly-telegram login</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --primary-disabled: #1e3a8a;
+      --danger: #ef4444;
+      --focus-ring: rgba(59, 130, 246, 0.5);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+    }
+
+    .header-block {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+
+    .input-group {
+      margin-bottom: 1.25rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 1rem;
+      padding: 0.75rem 1rem;
+      transition: all 0.2s ease;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--focus-ring);
+    }
+
+    input::placeholder {
+      color: #475569;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.75rem;
+      margin-top: 0.4rem;
+      line-height: 1.4;
+    }
+
+    button {
+      width: 100%;
+      background: var(--primary);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      padding: 0.75rem;
+      margin-top: 0.5rem;
+      transition: background 0.2s ease, transform 0.1s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    button:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    button:disabled {
+      background: var(--primary-disabled);
+      color: #94a3b8;
+      cursor: not-allowed;
+    }
+
+    .error {
+      color: var(--danger);
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+      text-align: center;
+      min-height: 1rem;
+    }
+
+    .step { display: none; animation: fadeIn 0.3s ease-in-out; }
+    #step-credentials { display: block; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 480px) {
+      .card { padding: 2rem 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header-block">
+      <h1>fly-telegram</h1>
+      <p class="subtitle">Log in to your account</p>
+    </div>
+
+    <!-- Step 1: credentials + phone -->
+    <div id="step-credentials" class="step">
+      <div class="input-group">
+        <label>API ID</label>
+        <input id="api-id" type="text" placeholder="12345678" />
+      </div>
+
+      <div class="input-group">
+        <label>API Hash</label>
+        <input id="api-hash" type="text" placeholder="0123456789abcdef..." />
+      </div>
+
+      <div class="input-group">
+        <label>Phone number</label>
+        <input id="phone" type="tel" placeholder="+1234567890" />
+      </div>
+
+      <div class="input-group">
+        <label>Session name</label>
+        <input id="session-name" type="text" placeholder="default or work" />
+        <p class="hint">Use another name to authorize another account profile.</p>
+      </div>
+
+      <div class="input-group">
+        <label>SOCKS5 proxy</label>
+        <input id="proxy-url" type="text" placeholder="socks5://127.0.0.1:9050" />
+        <p class="hint">Optional. Use an IP host to avoid local proxy DNS lookup.</p>
+      </div>
+
+      <button id="btn-send" onclick="sendCode()">Send code</button>
+      <p class="error" id="err1"></p>
+    </div>
+
+    <!-- Step 2: verification code -->
+    <div id="step-code" class="step">
+      <div class="input-group">
+        <label>Verification code</label>
+        <input id="code" type="text" placeholder="12345" autocomplete="one-time-code" />
+      </div>
+
+      <button id="btn-signin" onclick="signIn()">Sign in</button>
+      <p class="error" id="err2"></p>
+    </div>
+
+    <!-- Step 3: 2FA password (shown only when server says need_password) -->
+    <div id="step-password" class="step">
+      <p id="hint-text" class="hint" style="margin-bottom: 1rem; text-align: center;"></p>
+      <div class="input-group">
+        <label>2FA password</label>
+        <input id="password" type="password" placeholder="Your cloud password" />
+      </div>
+
+      <button id="btn-2fa" onclick="submit2fa()">Confirm</button>
+      <p class="error" id="err3"></p>
+    </div>
+  </div>
+
+  <script>
+    function show(id) {
+      ["step-credentials", "step-code", "step-password"].forEach(s => {
+        document.getElementById(s).style.display = s === id ? "block" : "none";
+      });
+    }
+
+    function setLoading(btnId, loading) {
+      const btn = document.getElementById(btnId);
+      btn.disabled = loading;
+      btn.textContent = loading ? "Please wait..." : btn.dataset.label;
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      ["btn-send", "btn-signin", "btn-2fa"].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.dataset.label = el.textContent;
+      });
+    });
+
+    async function sendCode() {
+      setLoading("btn-send", true);
+      document.getElementById("err1").textContent = "";
+
+      const body = {
+        api_id:       document.getElementById("api-id").value.trim(),
+        api_hash:     document.getElementById("api-hash").value.trim(),
+        phone:        document.getElementById("phone").value.trim(),
+        proxy_url:    document.getElementById("proxy-url").value.trim(),
+        session_name: document.getElementById("session-name").value.trim(),
+      };
+
+      try {
+        const res = await fetch("/send_code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+          show("step-code");
+        } else {
+          document.getElementById("err1").textContent = data.error || "Unknown error";
+        }
+      } catch (e) {
+        document.getElementById("err1").textContent = "Network error: " + e.message;
+      } finally {
+        setLoading("btn-send", false);
+      }
+    }
+
+    async function signIn() {
+      setLoading("btn-signin", true);
+      document.getElementById("err2").textContent = "";
+
+      const body = {
+        code:     document.getElementById("code").value.trim(),
+        password: "",
+      };
+
+      try {
+        const res = await fetch("/sign_in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+          showSuccess();
+        } else if (data.need_password) {
+          const hint = data.password_hint;
+          document.getElementById("hint-text").textContent =
+            hint ? "Hint: " + hint : "";
+          show("step-password");
+        } else {
+          document.getElementById("err2").textContent = data.error || "Unknown error";
+        }
+      } catch (e) {
+        document.getElementById("err2").textContent = "Network error: " + e.message;
+      } finally {
+        setLoading("btn-signin", false);
+      }
+    }
+
+    async function submit2fa() {
+      setLoading("btn-2fa", true);
+      document.getElementById("err3").textContent = "";
+
+      const body = {
+        code:     document.getElementById("code").value.trim(),
+        password: document.getElementById("password").value,
+      };
+
+      try {
+        const res = await fetch("/sign_in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+          showSuccess();
+        } else {
+          document.getElementById("err3").textContent = data.error || "Unknown error";
+        }
+      } catch (e) {
+        document.getElementById("err3").textContent = "Network error: " + e.message;
+      } finally {
+        setLoading("btn-2fa", false);
+      }
+    }
+
+    function showSuccess() {
+      document.body.innerHTML =
+        "<div class='card' style='text-align:center;'>" +
+        "<svg style='width:64px;height:64px;color:#10b981;margin-bottom:1rem;' fill='none' stroke='currentColor' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'></path></svg>" +
+        "<h2 style='margin-bottom:0.5rem;'>Authorized</h2>" +
+        "<p style='color:var(--muted);'>You can now close this tab.</p></div>";
+    }
+  </script>
+</body>
+</html>

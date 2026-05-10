@@ -1,0 +1,10 @@
+/target
+/data
+/database.json
+/database.json.enc
+/fly-telegram.session
+/fly-telegram.session.enc
+/sessions/
+*.session
+*.session.enc
+.env

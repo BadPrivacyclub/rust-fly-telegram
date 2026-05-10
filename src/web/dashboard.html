@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>fly-telegram dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a; /* slate-900 */
+      color: #f8fafc; /* slate-50 */
+    }
+    
+    /* Custom thin scrollbar for webkit */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(30, 41, 59, 0.5); /* slate-800 */
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #475569; /* slate-600 */
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #64748b; /* slate-500 */
+    }
+
+    /* Hide scrollbar for clean internal scrolling but keep functionality */
+    .custom-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #475569 transparent;
+    }
+  </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col">
+
+  <header class="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+      <div class="flex items-center gap-3">
+        <!-- SVG Logo/Icon -->
+        <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+        <h1 class="text-lg font-bold tracking-tight text-slate-100">fly-telegram</h1>
+      </div>
+      <span id="connected" class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-red-500/15 text-red-400 border border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.2)] transition-colors duration-300">
+        offline
+      </span>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
+    
+    <!-- Top Stats Row -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Uptime Card -->
+      <section class="bg-slate-800/50 border border-slate-700 rounded-xl p-5 hover:bg-slate-800/80 transition-colors shadow-sm">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          Uptime
+        </h2>
+        <div id="uptime" class="text-3xl font-bold text-slate-100 mb-1">0s</div>
+        <div id="account" class="text-sm text-slate-400 truncate">No account</div>
+      </section>
+
+      <!-- Activity Card -->
+      <section class="bg-slate-800/50 border border-slate-700 rounded-xl p-5 hover:bg-slate-800/80 transition-colors shadow-sm flex flex-col justify-between">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+          Activity
+        </h2>
+        <div class="space-y-2">
+          <div class="flex justify-between items-center text-sm border-b border-slate-700/50 pb-2">
+            <span class="text-slate-300">Updates</span>
+            <strong id="updates" class="text-slate-100 bg-slate-700/50 px-2 py-0.5 rounded">0</strong>
+          </div>
+          <div class="flex justify-between items-center text-sm pt-1">
+            <span class="text-slate-300">Commands</span>
+            <strong id="commands" class="text-slate-100 bg-slate-700/50 px-2 py-0.5 rounded">0</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modules Card -->
+      <section class="bg-slate-800/50 border border-slate-700 rounded-xl p-5 hover:bg-slate-800/80 transition-colors shadow-sm flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+            Modules
+          </h2>
+          <span id="module-count" class="bg-blue-500/20 text-blue-400 text-xs font-bold px-2 py-1 rounded-full">0</span>
+        </div>
+        <!-- Scrollable list -->
+        <div class="flex-1 max-h-[80px] overflow-y-auto custom-scroll pr-1">
+          <div id="modules" class="flex flex-wrap gap-2">
+            <!-- Modules will be injected here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Security Card -->
+      <section class="bg-slate-800/50 border border-slate-700 rounded-xl p-5 hover:bg-slate-800/80 transition-colors shadow-sm flex flex-col justify-between">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+          Security
+        </h2>
+        <div class="space-y-2">
+          <div class="flex justify-between items-center text-sm border-b border-slate-700/50 pb-2">
+            <span class="text-slate-300">DB encryption</span>
+            <strong id="db-encrypted" class="text-slate-100">off</strong>
+          </div>
+          <div class="flex justify-between items-center text-sm pt-1">
+            <span class="text-slate-300">SOCKS5</span>
+            <strong id="proxy-state" class="text-slate-100 truncate max-w-[100px]" title="not set">not set</strong>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="flex gap-2 border-b border-slate-800">
+      <button id="tab-overview" onclick="showTab('overview')" class="px-4 py-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-300">Overview</button>
+      <button id="tab-deletelog" onclick="showTab('deletelog')" class="px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200">Delete Log</button>
+    </div>
+
+    <section id="overview-view" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <section class="bg-slate-800/40 border border-slate-700 rounded-xl p-5 shadow-sm h-fit">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-4-4h-1M9 20H4v-2a4 4 0 014-4h1m0-4a4 4 0 100-8 4 4 0 000 8zm8 0a4 4 0 100-8 4 4 0 000 8z"></path></svg>
+          Accounts
+        </h2>
+        <div id="accounts-list" class="space-y-3">
+          <div class="text-sm text-slate-500">No connected accounts.</div>
+        </div>
+      </section>
+
+      <section class="bg-slate-800/40 border border-slate-700 rounded-xl p-5 shadow-sm h-fit">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          Settings
+        </h2>
+        <div class="space-y-4">
+          <div>
+            <label for="proxy-url" class="block text-xs font-medium text-slate-400 mb-1">SOCKS5 Proxy</label>
+            <input id="proxy-url" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors" placeholder="socks5://127.0.0.1:9050" />
+          </div>
+          <div>
+            <label for="master-password" class="block text-xs font-medium text-slate-400 mb-1">Master Password</label>
+            <input id="master-password" type="password" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors" placeholder="Leave empty to keep current" />
+          </div>
+          <div class="pt-2 flex flex-col gap-2">
+            <button onclick="saveSettings()" class="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors shadow-sm">Save Settings</button>
+            <div class="flex gap-2">
+              <button onclick="clearMasterPassword()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors">Disable Encrypt</button>
+              <button onclick="location.href='/login'" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors">Authorize Acc</button>
+            </div>
+          </div>
+          <div id="settings-message" class="text-sm min-h-[1.25rem] text-center font-medium mt-2"></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="deletelog-view" class="hidden bg-slate-800/40 border border-slate-700 rounded-xl shadow-sm overflow-hidden">
+      <div class="bg-slate-800/80 p-4 border-b border-slate-700 flex flex-col gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2 m-0">
+            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            Delete Log
+          </h2>
+          <span id="deletelog-count" class="text-xs text-slate-500">0 records</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <input id="deletelog-search" oninput="scheduleDeleteLogRefresh()" class="md:col-span-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500" placeholder="Search chat, id, text" />
+          <select id="deletelog-account" onchange="refreshDeleteLog()" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500">
+            <option value="">All accounts</option>
+          </select>
+          <input id="deletelog-chat" oninput="scheduleDeleteLogRefresh()" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500" placeholder="Chat name or id" />
+          <select id="deletelog-media" onchange="refreshDeleteLog()" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500">
+            <option value="">All media</option>
+            <option value="photo">Photo</option>
+            <option value="video">Video</option>
+            <option value="image">Image file</option>
+            <option value="audio">Audio</option>
+            <option value="sticker">Sticker</option>
+            <option value="file">File</option>
+            <option value="poll">Poll</option>
+            <option value="contact">Contact</option>
+            <option value="geo">Geo</option>
+            <option value="webpage">Web page</option>
+          </select>
+        </div>
+      </div>
+      <div id="deletelog-results" class="h-[650px] overflow-y-auto custom-scroll p-4 space-y-3">
+        <div class="text-slate-500 text-sm flex items-center justify-center h-full">No deleted messages recorded.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function formatUptime(seconds) {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${hours}h ${minutes}m ${secs}s`;
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/status");
+        if(!res.ok) throw new Error("Server error");
+        const data = await res.json();
+
+        // Status Indicator
+        const connected = document.getElementById("connected");
+        connected.textContent = data.connected ? "connected" : "offline";
+        if (data.connected) {
+          connected.className = "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.15)] transition-colors duration-300";
+        } else {
+          connected.className = "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-red-500/15 text-red-400 border border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.2)] transition-colors duration-300";
+        }
+
+        // Stats updates
+        document.getElementById("uptime").textContent = formatUptime(data.uptime_seconds);
+        renderAccounts(data.accounts || []);
+        document.getElementById("updates").textContent = data.updates_seen;
+        document.getElementById("commands").textContent = data.commands_seen;
+        document.getElementById("module-count").textContent = data.module_count;
+        document.getElementById("db-encrypted").textContent = data.db_encrypted ? "on" : "off";
+        document.getElementById("db-encrypted").className = data.db_encrypted ? "text-emerald-400 font-semibold" : "text-slate-100";
+        
+        const proxyStateElem = document.getElementById("proxy-state");
+        proxyStateElem.textContent = data.proxy_url || "not set";
+        proxyStateElem.title = data.proxy_url || "not set"; // tooltip for long urls
+
+        const proxyInput = document.getElementById("proxy-url");
+        if (document.activeElement !== proxyInput) {
+          proxyInput.value = data.proxy_url || "";
+        }
+
+        // Modules updates (Pills layout)
+        const modules = document.getElementById("modules");
+        modules.innerHTML = "";
+        data.modules.forEach(name => {
+          const item = document.createElement("span");
+          item.className = "bg-slate-700/50 border border-slate-600 text-slate-300 px-2.5 py-1 rounded-md text-xs font-medium";
+          item.textContent = name;
+          modules.appendChild(item);
+        });
+
+      } catch (e) {
+        console.error("Failed to fetch status", e);
+        const connected = document.getElementById("connected");
+        connected.textContent = "offline";
+        connected.className = "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-red-500/15 text-red-400 border border-red-500/20 transition-colors duration-300";
+      }
+    }
+
+    function formatUnixTime(value) {
+      const seconds = Number(value);
+      if (!Number.isFinite(seconds) || seconds <= 0) return value || "unknown";
+      
+      const date = new Date(seconds * 1000);
+      // Format: DD.MM.YYYY, HH:MM:SS (shortened for space)
+      return date.toLocaleString('ru-RU', { 
+        day: '2-digit', month: '2-digit', 
+        hour: '2-digit', minute:'2-digit', second:'2-digit' 
+      });
+    }
+
+    function renderAccounts(accounts) {
+      const connectedAccounts = accounts.filter(account => account.connected);
+      const accountSummary = document.getElementById("account");
+      accountSummary.textContent = accounts.length
+        ? `${connectedAccounts.length}/${accounts.length} accounts connected`
+        : "No account";
+
+      const root = document.getElementById("accounts-list");
+      root.innerHTML = "";
+      if (accounts.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "text-sm text-slate-500";
+        empty.textContent = "No connected accounts.";
+        root.appendChild(empty);
+        return;
+      }
+
+      accounts.forEach(account => {
+        const item = document.createElement("div");
+        item.className = "bg-slate-900/60 border border-slate-700 rounded-lg p-3";
+
+        const header = document.createElement("div");
+        header.className = "flex items-center justify-between gap-3 mb-2";
+
+        const name = document.createElement("div");
+        name.className = "text-sm font-semibold text-slate-100 truncate";
+        name.textContent = account.name || "Unknown account";
+
+        const status = document.createElement("span");
+        status.className = account.connected
+          ? "text-[11px] font-bold uppercase text-emerald-400"
+          : "text-[11px] font-bold uppercase text-red-400";
+        status.textContent = account.connected ? "online" : "offline";
+
+        header.appendChild(name);
+        header.appendChild(status);
+        item.appendChild(header);
+
+        const meta = document.createElement("div");
+        meta.className = "text-xs text-slate-500 break-all mb-2";
+        meta.textContent = `${account.account_id || "unknown"} · ${account.session_file || "session"}`;
+        item.appendChild(meta);
+
+        const counters = document.createElement("div");
+        counters.className = "flex gap-2 text-xs text-slate-400";
+        counters.textContent = `Updates ${account.updates_seen || 0} · Commands ${account.commands_seen || 0}`;
+        item.appendChild(counters);
+
+        root.appendChild(item);
+      });
+      updateAccountFilter(accounts);
+    }
+
+    function updateAccountFilter(accounts) {
+      const select = document.getElementById("deletelog-account");
+      const current = select.value;
+      const options = ['<option value="">All accounts</option>'];
+      accounts.forEach(account => {
+        const value = escapeHtml(account.account_id || "");
+        const label = escapeHtml(account.name || account.account_id || "Unknown account");
+        options.push(`<option value="${value}">${label}</option>`);
+      });
+      select.innerHTML = options.join("");
+      select.value = current;
+    }
+
+    function showTab(tab) {
+      const showDeleteLog = tab === "deletelog";
+      document.getElementById("overview-view").classList.toggle("hidden", showDeleteLog);
+      document.getElementById("deletelog-view").classList.toggle("hidden", !showDeleteLog);
+      document.getElementById("tab-overview").className = showDeleteLog
+        ? "px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200"
+        : "px-4 py-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-300";
+      document.getElementById("tab-deletelog").className = showDeleteLog
+        ? "px-4 py-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-300"
+        : "px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200";
+      if (showDeleteLog) refreshDeleteLog();
+    }
+
+    let deleteLogTimer = null;
+
+    function scheduleDeleteLogRefresh() {
+      clearTimeout(deleteLogTimer);
+      deleteLogTimer = setTimeout(refreshDeleteLog, 250);
+    }
+
+    async function refreshDeleteLog() {
+      try {
+        const params = new URLSearchParams();
+        const q = document.getElementById("deletelog-search").value.trim();
+        const account = document.getElementById("deletelog-account").value;
+        const chat = document.getElementById("deletelog-chat").value.trim();
+        const mediaType = document.getElementById("deletelog-media").value;
+        if (q) params.set("q", q);
+        if (account) params.set("account", account);
+        if (chat) params.set("chat", chat);
+        if (mediaType) params.set("media_type", mediaType);
+        params.set("limit", "200");
+
+        const res = await fetch(`/api/deletelog?${params.toString()}`);
+        if (!res.ok) throw new Error("Server error");
+        const data = await res.json();
+        renderDeleteLog(data.messages || []);
+      } catch (e) {
+        console.error("Failed to fetch delete log", e);
+      }
+    }
+
+    function renderDeleteLog(messages) {
+      const root = document.getElementById("deletelog-results");
+      document.getElementById("deletelog-count").textContent = `${messages.length} records`;
+      root.innerHTML = "";
+
+      if (messages.length === 0) {
+        root.innerHTML = '<div class="text-slate-500 text-sm flex items-center justify-center h-full">No deleted messages recorded.</div>';
+        return;
+      }
+
+      messages.forEach(message => {
+        const item = document.createElement("article");
+        item.className = "bg-slate-900/60 border border-slate-700 rounded-lg p-4";
+        const account = message.account || {};
+        const chat = message.chat || {};
+
+        const header = document.createElement("div");
+        header.className = "flex flex-col lg:flex-row lg:items-start lg:justify-between gap-2 mb-3";
+        const title = document.createElement("div");
+        const chatTitle = document.createElement("div");
+        chatTitle.className = "text-sm font-semibold text-slate-100";
+        chatTitle.textContent = chat.title || "Unknown chat";
+        const meta = document.createElement("div");
+        meta.className = "text-xs text-slate-500 break-all";
+        meta.textContent = `${account.name || "Unknown account"} · ${chat.kind || "chat"} · ${chat.id || "unknown"} · sender ${message.sender_id || "unknown"}`;
+        title.appendChild(chatTitle);
+        title.appendChild(meta);
+
+        const deletedAt = document.createElement("div");
+        deletedAt.className = "text-xs text-slate-400";
+        deletedAt.textContent = `Deleted ${formatUnixTime(message.deleted_at)}`;
+        header.appendChild(title);
+        header.appendChild(deletedAt);
+        item.appendChild(header);
+
+        const badges = document.createElement("div");
+        badges.className = "flex flex-wrap gap-2 mb-3";
+        appendBadge(badges, `msg ${message.message_id}`);
+        if (message.media_type) appendBadge(badges, message.media_type);
+        if (message.media_size) appendBadge(badges, formatBytes(message.media_size));
+        if (message.media_name) appendBadge(badges, message.media_name);
+        item.appendChild(badges);
+
+        const text = document.createElement("div");
+        text.className = "text-slate-300 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed";
+        text.textContent = message.text || "(non-text or empty)";
+        item.appendChild(text);
+
+        const mediaUrl = mediaUrlFromPath(message.media_path);
+        if (mediaUrl) item.appendChild(renderMediaPreview(mediaUrl, message));
+        root.appendChild(item);
+      });
+    }
+
+    function appendBadge(root, text) {
+      const badge = document.createElement("span");
+      badge.className = "text-[11px] text-slate-300 bg-slate-800 border border-slate-700 rounded px-2 py-1";
+      badge.textContent = text;
+      root.appendChild(badge);
+    }
+
+    function mediaUrlFromPath(path) {
+      if (!path) return null;
+      const normalized = path.replaceAll("\\", "/");
+      const prefix = "data/deleted_media/";
+      if (!normalized.startsWith(prefix)) return null;
+      return `/media/${normalized.slice(prefix.length)}`;
+    }
+
+    function renderMediaPreview(url, message) {
+      const box = document.createElement("div");
+      box.className = "mt-3";
+      const type = message.media_type || "";
+      if (type === "photo" || type === "image" || type === "sticker") {
+        const img = document.createElement("img");
+        img.className = "max-h-64 rounded-lg border border-slate-700 object-contain";
+        img.src = url;
+        img.alt = message.media_name || type;
+        box.appendChild(img);
+      } else if (type === "video") {
+        const video = document.createElement("video");
+        video.className = "max-h-80 rounded-lg border border-slate-700";
+        video.src = url;
+        video.controls = true;
+        box.appendChild(video);
+      } else if (type === "audio") {
+        const audio = document.createElement("audio");
+        audio.src = url;
+        audio.controls = true;
+        box.appendChild(audio);
+      } else {
+        const link = document.createElement("a");
+        link.className = "text-sm text-blue-400 hover:underline";
+        link.href = url;
+        link.target = "_blank";
+        link.textContent = "Open saved media";
+        box.appendChild(link);
+      }
+      return box;
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value);
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    async function refreshAntiDelete() {
+      try {
+        const res = await fetch("/api/antidelete");
+        if (!res.ok) throw new Error("Server error");
+        const data = await res.json();
+        renderAntiDelete(data);
+      } catch (e) {
+        console.error("Failed to fetch anti-delete store", e);
+      }
+    }
+
+    function renderAntiDelete(data) {
+      const root = document.getElementById("antidelete");
+      const accounts = data.accounts || {};
+      const accountEntries = Object.values(accounts);
+      
+      if (accountEntries.length === 0) {
+        root.innerHTML = '<div class="text-slate-500 text-sm flex items-center justify-center h-full">No deleted messages recorded.</div>';
+        return;
+      }
+
+      root.innerHTML = ""; // Clear existing
+
+      accountEntries.forEach(accountEntry => {
+        const account = accountEntry.account || {};
+        const chats = Object.values(accountEntry.chats || {});
+        
+        const accountNode = document.createElement("div");
+        accountNode.className = "mb-6 last:mb-0";
+        
+        const accountTitle = document.createElement("div");
+        accountTitle.className = "text-sm font-bold text-slate-200 mb-3 flex items-center gap-2 border-b border-slate-700/50 pb-2";
+        accountTitle.innerHTML = `<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg> ${account.name || "Unknown account"}`;
+        accountNode.appendChild(accountTitle);
+
+        chats.forEach(chatEntry => {
+          const chat = chatEntry.chat || {};
+          const messages = chatEntry.messages || [];
+          
+          const chatNode = document.createElement("div");
+          chatNode.className = "mb-4 bg-slate-900/50 rounded-lg p-3 border border-slate-700/50";
+          
+          // Chat Header
+          const chatHeader = document.createElement("div");
+          chatHeader.className = "flex justify-between items-start mb-3";
+          
+          const titleBox = document.createElement("div");
+          const titleStr = chat.title || "Unknown chat";
+          const linkStr = chat.link ? ` · <a href="${chat.link}" class="text-blue-400 hover:underline" target="_blank">Link</a>` : "";
+          titleBox.innerHTML = `<strong class="text-slate-200 text-sm block">${titleStr}</strong>
+                                <span class="text-xs text-slate-500">${chat.kind || "chat"} · ${chat.id || "unknown"} ${linkStr}</span>`;
+          
+          chatHeader.appendChild(titleBox);
+          chatNode.appendChild(chatHeader);
+
+          // Messages Container (Logs)
+          const msgsContainer = document.createElement("div");
+          msgsContainer.className = "space-y-2";
+
+          messages.slice(-20).reverse().forEach(message => {
+            const item = document.createElement("div");
+            item.className = "bg-slate-800 rounded-md p-3 border border-slate-700/80 text-sm relative group hover:border-slate-600 transition-colors";
+            
+            // Safe HTML construction
+            const topBar = document.createElement("div");
+            topBar.className = "flex justify-between items-center text-xs text-slate-400 mb-1.5 pb-1.5 border-b border-slate-700/50";
+            
+            const senderSpan = document.createElement("span");
+            senderSpan.className = "font-medium text-blue-300";
+            senderSpan.textContent = `ID: ${message.sender_id || "unknown"}`;
+            
+            const timeSpan = document.createElement("span");
+            timeSpan.textContent = `Del: ${formatUnixTime(message.deleted_at)}`;
+            
+            topBar.appendChild(senderSpan);
+            topBar.appendChild(timeSpan);
+            item.appendChild(topBar);
+
+            const msgText = document.createElement("div");
+            msgText.className = "text-slate-300 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed";
+            msgText.textContent = message.text || "(non-text or empty)";
+            
+            item.appendChild(msgText);
+            msgsContainer.appendChild(item);
+          });
+
+          chatNode.appendChild(msgsContainer);
+          accountNode.appendChild(chatNode);
+        });
+
+        root.appendChild(accountNode);
+      });
+    }
+
+    async function saveSettings() {
+      await submitSettings(false);
+    }
+
+    async function clearMasterPassword() {
+      await submitSettings(true);
+    }
+
+    async function submitSettings(clearMasterPassword) {
+      const message = document.getElementById("settings-message");
+      message.textContent = "Saving...";
+      message.className = "text-sm min-h-[1.25rem] text-center font-medium mt-2 text-slate-400";
+      
+      try {
+        const res = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            proxy_url: document.getElementById("proxy-url").value.trim(),
+            master_password: document.getElementById("master-password").value,
+            clear_master_password: clearMasterPassword,
+          }),
+        });
+        const data = await res.json();
+        
+        if(data.ok) {
+          message.textContent = "Saved successfully.";
+          message.className = "text-sm min-h-[1.25rem] text-center font-medium mt-2 text-emerald-400";
+        } else {
+          message.textContent = data.error || "Failed to save.";
+          message.className = "text-sm min-h-[1.25rem] text-center font-medium mt-2 text-red-400";
+        }
+        
+        document.getElementById("master-password").value = "";
+        refresh();
+        setTimeout(() => { message.textContent = ""; }, 3000); // Clear message after 3 sec
+      } catch(e) {
+        message.textContent = "Network error: " + e.message;
+        message.className = "text-sm min-h-[1.25rem] text-center font-medium mt-2 text-red-400";
+      }
+    }
+
+    // Init & Timers
+    refresh();
+    refreshDeleteLog();
+    setInterval(refresh, 2000);
+    setInterval(refreshDeleteLog, 5000);
+  </script>
+</body>
+</html>
