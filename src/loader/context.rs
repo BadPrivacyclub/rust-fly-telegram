@@ -1,9 +1,13 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use grammers_client::media::Media;
+use grammers_client::message::Message as TelegramMessage;
+use grammers_client::peer::Peer;
+use grammers_client::tl;
 use grammers_client::update::Message;
 use grammers_client::Client;
-use grammers_session::types::{PeerAuth, PeerRef};
+use grammers_session::types::{PeerId, PeerKind, PeerRef};
 use mlua::{LuaSerdeExt, UserData, UserDataMethods};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -15,6 +19,9 @@ use crate::runtime::RuntimeState;
 use crate::telegram;
 
 use super::installer;
+
+const GROUP_INFO_SCAN_LIMIT: usize = 20_000;
+const GROUP_INFO_SEARCH_PAGE_LIMIT: i32 = 100;
 
 /// Lua context object passed to every module handler.
 ///
@@ -187,10 +194,6 @@ impl UserData for Ctx {
                 .map_err(|e| mlua::Error::runtime(e.to_string()))
         });
 
-        methods.add_async_method("run_capture", |_, _ctx, command: String| async move {
-            Ok(run_command_capture(&command).await.unwrap_or_default())
-        });
-
         methods.add_async_method("delete_last_own", |_, ctx, count: u32| async move {
             delete_last_own_messages(ctx.clone(), count)
                 .await
@@ -305,24 +308,8 @@ async fn run_shell_command(ctx: Ctx, command: String) -> anyhow::Result<()> {
 async fn update_project(ctx: Ctx) -> anyhow::Result<()> {
     edit_current_message(&ctx, "Checking for updates...").await?;
 
-    let old_head = match run_command_capture("git rev-parse HEAD").await {
-        Ok(h) => h,
-        Err(e) => {
-            let text = format!("**Update failed.**\n\n```text\n{e}\n```");
-            edit_current_message(&ctx, &text).await?;
-            return Ok(());
-        }
-    };
-
-    let pull_output = match run_command_capture("git pull").await {
-        Ok(o) => o,
-        Err(e) => {
-            let text = format!("**Pull failed.**\n\n```text\n{e}\n```");
-            edit_current_message(&ctx, &sanitize_text(&ctx, &text).await).await?;
-            return Ok(());
-        }
-    };
-
+    let old_head = run_command_capture("git rev-parse HEAD").await?;
+    let pull_output = run_command_capture("git pull").await?;
     let new_head = run_command_capture("git rev-parse HEAD").await?;
 
     if old_head.trim() == new_head.trim() {
@@ -347,24 +334,13 @@ async fn update_project(ctx: Ctx) -> anyhow::Result<()> {
 
     if rust_changed {
         edit_current_message(&ctx, "**Rust changes found.**  \nBuilding release...").await?;
-        match run_command_capture("cargo build --release").await {
-            Ok(build_output) => {
-                let text = format!(
-                    "**Updated and built release.**\n\n```text\n{}\n```\n\n**Restarting...**",
-                    sanitize_text(&ctx, &build_output).await
-                );
-                edit_current_message(&ctx, &text).await?;
-                std::process::exit(0);
-            }
-            Err(e) => {
-                let text = format!(
-                    "**Build failed.**\n\n```text\n{}\n```",
-                    sanitize_text(&ctx, &e.to_string()).await
-                );
-                edit_current_message(&ctx, &text).await?;
-                return Ok(());
-            }
-        }
+        let build_output = run_command_capture("cargo build --release").await?;
+        let text = format!(
+            "**Updated and built release.**\n\n```text\n{}\n```\n\n**Restarting...**",
+            sanitize_text(&ctx, &build_output).await
+        );
+        edit_current_message(&ctx, &text).await?;
+        std::process::exit(0);
     }
 
     let text = if lua_changed {
@@ -492,29 +468,439 @@ async fn delete_last_own_messages(ctx: Ctx, count: u32) -> anyhow::Result<()> {
 async fn build_message_info(ctx: Ctx) -> anyhow::Result<String> {
     let guard = ctx.message.lock().await;
     let Some(msg) = guard.as_ref() else {
-        return Ok("**Message**  \nNo message context.".to_string());
+        return Ok("**Info**  \nNo message context.".to_string());
     };
     let reply = msg.get_reply().await?;
     let target = reply.as_ref().unwrap_or(msg);
+    let peer_ref = telegram::resolve_message_peer(&ctx.client, msg).await?;
+    let sender_id = target.sender_id();
+    let sender_ref = target.sender_ref().await;
+    let target_is_own = target.outgoing();
 
     let mut lines = Vec::new();
-    lines.push("**Message info**".to_string());
-    lines.push(format!(
-        "**Chat ID:** `{}`",
-        i64::from(telegram::resolve_message_peer(&ctx.client, msg).await?)
-    ));
+    lines.push("**Info**".to_string());
+    lines.push(format!("**Chat ID:** `{}`", format_peer_id(peer_ref.id)));
     lines.push(format!("**Message ID:** `{}`", target.id()));
-    if let Some(sender_id) = target.sender_id() {
+    lines.push(format!(
+        "**Target:** `{}`",
+        if reply.is_some() { "reply" } else { "current" }
+    ));
+
+    if !matches!(peer_ref.id.kind(), PeerKind::UserSelf) {
+        let chat_dc = chat_dc_id(&ctx.client, msg, peer_ref)
+            .await?
+            .map(|dc_id| dc_id.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        lines.push(format!("**DC:** `{chat_dc}`"));
+    }
+
+    if let Some(sender_id) = sender_id.filter(|_| !target_is_own) {
+        lines.push(format!("**Sender ID:** `{}`", format_peer_id(sender_id)));
         lines.push(format!(
-            "**Sender ID:** `{}`",
-            i64::from(PeerRef {
-                id: sender_id,
-                auth: PeerAuth::default(),
-            })
+            "**Estimated registration:** `{}`",
+            estimate_telegram_registration(sender_id)
         ));
     }
-    if target.media().is_some() {
-        lines.push("**Media:** `yes`".to_string());
+
+    if let Some(peer) = target.sender().filter(|_| !target_is_own) {
+        append_peer_identity(&mut lines, peer);
     }
+
+    if let Some(file_dc) = message_file_dc_id(target) {
+        let file_dc = file_dc
+            .map(|dc_id| dc_id.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        lines.push(format!("**File DC:** `{file_dc}`"));
+    }
+
+    if is_group_peer(peer_ref.id) && !target_is_own {
+        if let Some(sender_id) = sender_id {
+            let stats =
+                collect_group_sender_stats(&ctx.client, peer_ref, sender_id, sender_ref).await?;
+            lines.push(format!("**Group messages by user:** `{}`", stats.count));
+            if let Some(first_seen) = stats.first_seen {
+                lines.push(format!("**First group message:** `{first_seen}`"));
+            }
+            if stats.truncated {
+                lines.push(format!(
+                    "**Group scan:** `first {GROUP_INFO_SCAN_LIMIT} messages only`"
+                ));
+            }
+        }
+    }
+
     Ok(lines.join("  \n"))
+}
+
+fn format_peer_id(peer_id: PeerId) -> i64 {
+    peer_id.bot_api_dialog_id()
+}
+
+fn is_group_peer(peer_id: PeerId) -> bool {
+    matches!(peer_id.kind(), PeerKind::Chat | PeerKind::Channel)
+}
+
+fn append_peer_identity(lines: &mut Vec<String>, peer: &Peer) {
+    if let Some(name) = peer.name().filter(|name| !name.is_empty()) {
+        lines.push(format!("**Nickname:** `{}`", escape_inline_code(name)));
+    }
+    if let Some(username) = peer.username().filter(|username| !username.is_empty()) {
+        lines.push(format!("**Username:** `@{}`", escape_inline_code(username)));
+    }
+}
+
+fn escape_inline_code(text: &str) -> String {
+    text.replace('`', "'")
+}
+
+async fn chat_dc_id(
+    client: &Client,
+    msg: &Message,
+    peer_ref: PeerRef,
+) -> anyhow::Result<Option<i32>> {
+    if matches!(peer_ref.id.kind(), PeerKind::UserSelf) {
+        return Ok(None);
+    }
+
+    if let Some(dc_id) = msg.peer().and_then(peer_profile_dc_id) {
+        return Ok(Some(dc_id));
+    }
+
+    match client.resolve_peer(peer_ref).await {
+        Ok(peer) => Ok(peer_profile_dc_id(&peer)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn peer_profile_dc_id(peer: &Peer) -> Option<i32> {
+    match peer {
+        Peer::User(user) => user.photo().map(|photo| photo.dc_id),
+        Peer::Group(group) => group.photo().map(|photo| photo.dc_id),
+        Peer::Channel(channel) => channel.photo().map(|photo| photo.dc_id),
+    }
+}
+
+fn message_file_dc_id(message: &TelegramMessage) -> Option<Option<i32>> {
+    match message.media()? {
+        Media::Photo(photo) => Some(photo.raw.photo.as_ref().and_then(photo_dc_id)),
+        Media::Document(document) => Some(document.raw.document.as_ref().and_then(document_dc_id)),
+        Media::Sticker(sticker) => Some(
+            sticker
+                .document
+                .raw
+                .document
+                .as_ref()
+                .and_then(document_dc_id),
+        ),
+        _ => None,
+    }
+}
+
+fn photo_dc_id(photo: &tl::enums::Photo) -> Option<i32> {
+    match photo {
+        tl::enums::Photo::Photo(photo) => Some(photo.dc_id),
+        tl::enums::Photo::Empty(_) => None,
+    }
+}
+
+fn document_dc_id(document: &tl::enums::Document) -> Option<i32> {
+    match document {
+        tl::enums::Document::Document(document) => Some(document.dc_id),
+        tl::enums::Document::Empty(_) => None,
+    }
+}
+
+#[derive(Debug, Default)]
+struct GroupSenderStats {
+    count: usize,
+    first_seen: Option<String>,
+    truncated: bool,
+}
+
+async fn collect_group_sender_stats(
+    client: &Client,
+    peer_ref: PeerRef,
+    sender_id: PeerId,
+    sender_ref: Option<PeerRef>,
+) -> anyhow::Result<GroupSenderStats> {
+    if let Some(sender_ref) = sender_ref {
+        if let Some(stats) = search_group_sender_stats(client, peer_ref, sender_ref).await? {
+            return Ok(stats);
+        }
+    }
+
+    scan_group_sender_stats(client, peer_ref, sender_id).await
+}
+
+async fn search_group_sender_stats(
+    client: &Client,
+    peer_ref: PeerRef,
+    sender_ref: PeerRef,
+) -> anyhow::Result<Option<GroupSenderStats>> {
+    if !matches!(sender_ref.id.kind(), PeerKind::User | PeerKind::UserSelf) {
+        return Ok(None);
+    }
+
+    let mut request = tl::functions::messages::Search {
+        peer: peer_ref.into(),
+        q: String::new(),
+        from_id: Some(sender_ref.into()),
+        saved_peer_id: None,
+        saved_reaction: None,
+        top_msg_id: None,
+        filter: tl::enums::MessagesFilter::InputMessagesFilterEmpty,
+        min_date: 0,
+        max_date: 0,
+        offset_id: 0,
+        add_offset: 0,
+        limit: GROUP_INFO_SEARCH_PAGE_LIMIT,
+        max_id: 0,
+        min_id: 0,
+        hash: 0,
+    };
+    let mut stats = GroupSenderStats::default();
+    let mut scanned = 0usize;
+
+    loop {
+        let response = client.invoke(&request).await?;
+        let (messages, total) = search_messages_and_total(response);
+        if let Some(total) = total {
+            stats.count = total;
+        }
+
+        if messages.is_empty() {
+            return Ok(Some(stats));
+        }
+
+        for message in &messages {
+            if let Some(timestamp) = raw_message_timestamp(message) {
+                stats.first_seen = Some(format_unix_timestamp(timestamp));
+            }
+        }
+        scanned += messages.len();
+
+        let Some(last_id) = messages.last().map(|message| message.id()) else {
+            return Ok(Some(stats));
+        };
+        if messages.len() < GROUP_INFO_SEARCH_PAGE_LIMIT as usize || last_id <= 1 {
+            return Ok(Some(stats));
+        }
+        if scanned >= GROUP_INFO_SCAN_LIMIT {
+            stats.truncated = true;
+            return Ok(Some(stats));
+        }
+
+        request.offset_id = last_id;
+    }
+}
+
+fn search_messages_and_total(
+    response: tl::enums::messages::Messages,
+) -> (Vec<tl::enums::Message>, Option<usize>) {
+    match response {
+        tl::enums::messages::Messages::Messages(messages) => {
+            let total = messages.messages.len();
+            (messages.messages, Some(total))
+        }
+        tl::enums::messages::Messages::Slice(messages) => {
+            (messages.messages, Some(messages.count as usize))
+        }
+        tl::enums::messages::Messages::ChannelMessages(messages) => {
+            (messages.messages, Some(messages.count as usize))
+        }
+        tl::enums::messages::Messages::NotModified(messages) => {
+            (Vec::new(), Some(messages.count as usize))
+        }
+    }
+}
+
+fn raw_message_timestamp(message: &tl::enums::Message) -> Option<i32> {
+    match message {
+        tl::enums::Message::Message(message) => Some(message.date),
+        tl::enums::Message::Service(message) => Some(message.date),
+        tl::enums::Message::Empty(_) => None,
+    }
+}
+
+async fn scan_group_sender_stats(
+    client: &Client,
+    peer_ref: PeerRef,
+    sender_id: PeerId,
+) -> anyhow::Result<GroupSenderStats> {
+    let mut messages = client.iter_messages(peer_ref);
+    let mut stats = GroupSenderStats::default();
+    let mut scanned = 0usize;
+
+    while scanned < GROUP_INFO_SCAN_LIMIT {
+        let Some(message) = messages.next().await? else {
+            return Ok(stats);
+        };
+        scanned += 1;
+
+        if message.sender_id() == Some(sender_id) {
+            stats.count += 1;
+            stats.first_seen = Some(format_message_date(&message));
+        }
+    }
+
+    stats.truncated = messages.next().await?.is_some();
+    Ok(stats)
+}
+
+fn format_message_date(message: &TelegramMessage) -> String {
+    message.date().format("%Y-%m-%d %H:%M:%S UTC").to_string()
+}
+
+fn format_unix_timestamp(timestamp: i32) -> String {
+    let days = i64::from(timestamp).div_euclid(86_400);
+    let seconds = i64::from(timestamp).rem_euclid(86_400);
+    let (year, month, day) = date_from_days_since_epoch(days);
+    let hour = seconds / 3600;
+    let minute = seconds % 3600 / 60;
+    let second = seconds % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
+}
+
+fn estimate_telegram_registration(peer_id: PeerId) -> String {
+    if !matches!(peer_id.kind(), PeerKind::User | PeerKind::UserSelf) {
+        return "not a user".to_string();
+    }
+
+    match estimate_registration_month(peer_id.bot_api_dialog_id()) {
+        RegistrationEstimate::Date { year, month } => format!("{} {year}", month_name(month)),
+        RegistrationEstimate::TooEarly => "error: first account IDs started around 100".to_string(),
+        RegistrationEstimate::SkippedRange => {
+            "error: Telegram skipped this range during 64-bit migration".to_string()
+        }
+        RegistrationEstimate::TooLarge => "ID is too large, likely from the future".to_string(),
+        RegistrationEstimate::Unknown => "unknown".to_string(),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RegistrationEstimate {
+    Date { year: i32, month: u8 },
+    TooEarly,
+    SkippedRange,
+    TooLarge,
+    Unknown,
+}
+
+fn estimate_registration_month(target_id: i64) -> RegistrationEstimate {
+    const ANCHORS: &[(i64, i32, u8, u8)] = &[
+        (100, 2013, 8, 14),
+        (35_000_000, 2014, 1, 1),
+        (100_000_000, 2015, 1, 1),
+        (250_000_000, 2016, 1, 1),
+        (400_000_000, 2017, 1, 1),
+        (550_000_000, 2018, 1, 1),
+        (750_000_000, 2019, 1, 1),
+        (1_000_000_000, 2020, 1, 1),
+        (1_500_000_000, 2021, 1, 1),
+        (2_147_483_647, 2021, 12, 1),
+        (5_000_000_000, 2022, 1, 1),
+        (5_650_000_000, 2023, 1, 1),
+        (6_300_000_000, 2024, 1, 1),
+        (7_200_000_000, 2025, 1, 1),
+        (8_100_000_000, 2026, 1, 1),
+        (9_000_000_000, 2027, 1, 1),
+    ];
+
+    if target_id < 100 {
+        return RegistrationEstimate::TooEarly;
+    }
+    if 2_147_483_647 < target_id && target_id < 5_000_000_000 {
+        return RegistrationEstimate::SkippedRange;
+    }
+    if target_id > ANCHORS[ANCHORS.len() - 1].0 {
+        return RegistrationEstimate::TooLarge;
+    }
+
+    for window in ANCHORS.windows(2) {
+        let (start_id, start_year, start_month, start_day) = window[0];
+        let (end_id, end_year, end_month, end_day) = window[1];
+        if start_id <= target_id && target_id <= end_id {
+            let start_days = days_since_epoch(start_year, start_month, start_day);
+            let end_days = days_since_epoch(end_year, end_month, end_day);
+            let ratio = (target_id - start_id) as f64 / (end_id - start_id) as f64;
+            let estimated_days =
+                start_days + ((end_days - start_days) as f64 * ratio).round() as i64;
+            let (year, month, _) = date_from_days_since_epoch(estimated_days);
+            return RegistrationEstimate::Date { year, month };
+        }
+    }
+
+    RegistrationEstimate::Unknown
+}
+
+fn month_name(month: u8) -> &'static str {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    MONTHS
+        .get(month.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("Unknown")
+}
+
+fn days_since_epoch(year: i32, month: u8, day: u8) -> i64 {
+    let year = year - (month <= 2) as i32;
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month = month as i32;
+    let day = day as i32;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    (era * 146_097 + day_of_era - 719_468) as i64
+}
+
+fn date_from_days_since_epoch(days: i64) -> (i32, u8, u8) {
+    let days = days + 719_468;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era as i32 + era as i32 * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += (month <= 2) as i32;
+    (year, month as u8, day as u8)
+}
+
+#[cfg(test)]
+mod info_tests {
+    use super::{estimate_registration_month, RegistrationEstimate};
+
+    #[test]
+    fn estimate_registration_rejects_skipped_range() {
+        assert_eq!(
+            estimate_registration_month(3_000_000_000),
+            RegistrationEstimate::SkippedRange
+        );
+    }
+
+    #[test]
+    fn estimate_registration_interpolates_anchor_month() {
+        assert_eq!(
+            estimate_registration_month(5_000_000_000),
+            RegistrationEstimate::Date {
+                year: 2022,
+                month: 1,
+            }
+        );
+    }
 }

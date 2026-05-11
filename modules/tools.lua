@@ -6,7 +6,7 @@ M.meta = { name = "tools", version = "1.0" }
 
 M.commands = {
     del = "del_cmd",
-    id  = "id_cmd",
+    info = "info_cmd",
     sd  = "sd_cmd",
     ytdl = "ytdl_cmd",
 }
@@ -21,7 +21,7 @@ function M.del_cmd(ctx, args)
     ctx:delete_last_own(math.floor(count))
 end
 
-function M.id_cmd(ctx, args)
+function M.info_cmd(ctx, args)
     ctx:edit(ctx:message_info())
 end
 

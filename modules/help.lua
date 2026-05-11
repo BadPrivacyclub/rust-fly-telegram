@@ -17,7 +17,7 @@ function M.help_cmd(ctx, args)
         .. "`.note set|get|clear` - manage a saved note  \n"
         .. "`.alias set|get|del` - manage text aliases  \n"
         .. "`.del <count>` - delete recent messages  \n"
-        .. "`.id` - show chat, message, and user IDs  \n"
+        .. "`.info` - show chat, user, DC, and group activity info  \n"
         .. "`.sd <seconds> <text>` - self-destruct message  \n"
         .. "`.ytdl <url>` - run yt-dlp for a media URL  \n"
         .. "`.afk on [text]|off` - auto-reply when mentioned  \n"

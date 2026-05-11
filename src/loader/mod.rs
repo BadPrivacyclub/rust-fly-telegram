@@ -223,7 +223,7 @@ Base commands:
 .note set|get|clear - manage a saved note
 .alias set|get|del - manage text aliases
 .del <count> - delete recent messages
-.id - show chat/message/user IDs
+.info - show chat/user/DC/group activity info
 .sd <seconds> <text> - self-destruct message
 .ytdl <url> - run yt-dlp for a media URL
 .afk on [text]|off - auto-reply when mentioned
