@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use base64::Engine;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -33,7 +34,74 @@ async fn main() -> Result<()> {
 
     info!("fly-telegram starting");
 
-    let use_web = !std::env::args().any(|a| a == "--no-web");
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--keygen") {
+        let password = read_masked_password("Signing key password: ")?;
+        let (sk, vk) = crypto::generate_keypair();
+        crypto::save_keypair(
+            &sk,
+            &vk,
+            &password,
+            Path::new(config::SIGNING_KEY_ENC_FILE),
+            Path::new(config::SIGNING_PUB_KEY_FILE),
+        )?;
+        println!(
+            "Key pair saved:\n  private: {}\n  public:  {}",
+            config::SIGNING_KEY_ENC_FILE,
+            config::SIGNING_PUB_KEY_FILE
+        );
+        return Ok(());
+    }
+
+    if let Some(pos) = args.iter().position(|a| a == "--sign") {
+        let lua_path_str = args
+            .get(pos + 1)
+            .ok_or_else(|| anyhow::anyhow!("--sign requires a path argument"))?;
+        let lua_path = Path::new(lua_path_str);
+
+        let source = std::fs::read_to_string(lua_path)
+            .with_context(|| format!("reading {lua_path:?}"))?;
+
+        let manifest_path = loader::manifest::manifest_path(lua_path);
+        let mut manifest: loader::manifest::ModuleManifest = if manifest_path.exists() {
+            let raw = std::fs::read_to_string(&manifest_path)
+                .with_context(|| format!("reading {manifest_path:?}"))?;
+            serde_json::from_str(&raw)
+                .with_context(|| format!("parsing {manifest_path:?}"))?
+        } else {
+            loader::manifest::ModuleManifest::inferred(
+                lua_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("module")
+                    .to_string(),
+                loader::manifest::module_commands(&source),
+                &source,
+            )
+        };
+
+        let password = read_masked_password("Signing key password: ")?;
+        let sk = crypto::load_signing_key(Path::new(config::SIGNING_KEY_ENC_FILE), &password)?;
+
+        let sha256 = loader::manifest::source_sha256(&source);
+        let payload = loader::manifest::signing_payload(&manifest, &sha256);
+        let sig_bytes = crypto::sign_bytes(&payload, &sk);
+
+        manifest.signature =
+            Some(base64::engine::general_purpose::STANDARD.encode(sig_bytes));
+        manifest.checksum = Some(sha256);
+        manifest.trusted = true;
+
+        let json = serde_json::to_string_pretty(&manifest)?;
+        std::fs::write(&manifest_path, json)
+            .with_context(|| format!("writing {manifest_path:?}"))?;
+        println!("Signed: {manifest_path:?}");
+        return Ok(());
+    }
+
+    let use_web = !args.iter().any(|a| a == "--no-web");
+    drop(args);
     let master_password = read_master_password()?;
     let security_state = Arc::new(RwLock::new(master_password));
     let session_security = session_security::SessionSecurity::new(

@@ -98,6 +98,42 @@ Anti-delete storage follows the same master password. With encryption enabled,
 
 The `notify` crate watches the `modules/` directory. When a `.lua` file is saved, the old module is unloaded and the new version is loaded without restarting the process.
 
+### Module signing (Ed25519)
+
+Modules that declare `"trusted": true` in their manifest gain access to the full Lua runtime (no sandbox). Without signing, any file dropped into `modules/` with that flag would immediately obtain elevated privileges.
+
+The signing system binds the `trusted` flag to an **operator-held Ed25519 key pair**. On load, the runtime verifies the signature against the module source and its security-relevant manifest fields (`name`, `version`, `permissions`, `trusted`). A missing or invalid signature forces `trusted` to `false` with a warning — even after a hot-reload of a tampered file.
+
+#### Setup (one-time)
+
+```bash
+./fly-telegram --keygen
+# prompts for a signing password
+# writes keys/signing.key.enc  (encrypted private key)
+#        keys/signing.pub       (raw public key, 32 bytes)
+```
+
+#### Signing a module
+
+```bash
+./fly-telegram --sign modules/core.lua
+# prompts for the signing password
+# writes the base64 signature into core.lua.manifest.json
+# also refreshes the checksum field (SHA-256 of the source)
+```
+
+Repeat for every module that needs `"trusted": true`. Modules without a valid signature are sandboxed automatically.
+
+#### What is signed
+
+```json
+{"name":"core","permissions":[...],"source_sha256":"<hex>","trusted":true,"version":"1.0.0"}
+```
+
+Keys are sorted lexicographically — the payload is deterministic. Changing the source file, permissions, name, or version invalidates the signature.
+
+If `keys/signing.pub` is absent, all modules run sandboxed regardless of their manifest.
+
 ---
 
 ## Requirements
@@ -181,7 +217,9 @@ Enable inline mode for the bot in BotFather (`/setinline`).
 ```
 rust-fly-telegram/
 ├── src/
-│   ├── main.rs            Entry point
+│   ├── main.rs            Entry point, --keygen / --sign CLI
+│   ├── config.rs          Compile-time path constants
+│   ├── crypto.rs          Argon2 + XChaCha20 encryption, Ed25519 signing
 │   ├── database.rs        JSON key-value store
 │   ├── watcher.rs         Hot-reload file watcher
 │   ├── client/
@@ -189,6 +227,7 @@ rust-fly-telegram/
 │   │   └── auth.rs        CLI + web authorization
 │   ├── loader/
 │   │   ├── mod.rs         Lua module loader & dispatcher
+│   │   ├── manifest.rs    Manifest parsing, signature verification
 │   │   └── context.rs     ctx UserData exposed to Lua
 │   ├── bot/
 │   │   └── mod.rs         teloxide inline bot
@@ -200,6 +239,9 @@ rust-fly-telegram/
 │   ├── executor.lua
 │   ├── help.lua
 │   └── updater.lua
+├── keys/                  Created by --keygen (do not commit)
+│   ├── signing.pub        Ed25519 verifying key (32 bytes)
+│   └── signing.key.enc    Ed25519 signing key (encrypted)
 ├── database.json          Created on first run
 ├── fly-telegram.session   Created on first run
 ├── compile.bat            Windows build script
@@ -217,6 +259,16 @@ rust-fly-telegram/
 | `TELOXIDE_TOKEN` | Optional | Bot token for the inline bot subsystem |
 | `FLY_MASTER_PASSWORD` | Optional | Encrypts `database.json` and the session file at rest |
 | `RUST_LOG` | Optional | Log level, e.g. `fly_telegram=debug` |
+
+---
+
+## CLI flags
+
+| Flag | Description |
+|---|---|
+| `--no-web` | Skip the web authorization server |
+| `--keygen` | Generate an Ed25519 key pair in `keys/` and exit |
+| `--sign <path>` | Sign a module's manifest with the operator key and exit |
 
 ---
 

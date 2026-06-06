@@ -1,9 +1,12 @@
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use argon2::Argon2;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -64,6 +67,70 @@ pub fn encrypt_with_password(plain: &[u8], password: &str) -> Result<Vec<u8>> {
     };
 
     serde_json::to_vec_pretty(&blob).context("serializing encrypted blob")
+}
+
+/// Generates a fresh Ed25519 key pair.
+pub fn generate_keypair() -> (SigningKey, VerifyingKey) {
+    let sk = SigningKey::generate(&mut OsRng);
+    let vk = sk.verifying_key();
+    (sk, vk)
+}
+
+/// Signs `payload` with the given signing key; returns raw 64-byte signature.
+pub fn sign_bytes(payload: &[u8], key: &SigningKey) -> [u8; 64] {
+    key.sign(payload).to_bytes()
+}
+
+/// Returns true iff the raw 64-byte `sig` is a valid Ed25519 signature over `payload`.
+#[allow(dead_code)]
+pub fn verify_bytes(payload: &[u8], sig: &[u8; 64], key: &VerifyingKey) -> bool {
+    let sig = Signature::from_bytes(sig);
+    key.verify(payload, &sig).is_ok()
+}
+
+/// Encrypts and saves an Ed25519 key pair to disk.
+///
+/// - `enc_path`: private key encrypted via [`encrypt_with_password`]
+/// - `pub_path`: verifying key as raw 32 bytes
+pub fn save_keypair(
+    sk: &SigningKey,
+    vk: &VerifyingKey,
+    password: &str,
+    enc_path: &Path,
+    pub_path: &Path,
+) -> Result<()> {
+    if let Some(parent) = enc_path.parent() {
+        std::fs::create_dir_all(parent).context("creating keys directory")?;
+    }
+    let encrypted = encrypt_with_password(&sk.to_bytes(), password)?;
+    std::fs::write(enc_path, &encrypted)
+        .with_context(|| format!("writing {enc_path:?}"))?;
+    std::fs::write(pub_path, vk.to_bytes())
+        .with_context(|| format!("writing {pub_path:?}"))?;
+    Ok(())
+}
+
+/// Loads the verifying key from a file containing 32 raw bytes.
+/// Returns `None` if the file does not exist.
+pub fn load_verifying_key(path: &Path) -> Result<Option<VerifyingKey>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).with_context(|| format!("reading {path:?}"))?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("signing.pub must be exactly 32 bytes"))?;
+    Ok(Some(VerifyingKey::from_bytes(&arr)?))
+}
+
+/// Loads and decrypts the signing key from an encrypted file.
+pub fn load_signing_key(path: &Path, password: &str) -> Result<SigningKey> {
+    let encrypted = std::fs::read(path).with_context(|| format!("reading {path:?}"))?;
+    let raw = decrypt_with_password(&encrypted, password)?;
+    let arr: [u8; 32] = raw
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("signing key must be exactly 32 bytes"))?;
+    Ok(SigningKey::from_bytes(&arr))
 }
 
 /// Decrypts bytes that were written by [`encrypt_with_password`].

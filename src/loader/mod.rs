@@ -14,9 +14,11 @@ pub mod context;
 mod installer;
 pub mod manifest;
 
+use ed25519_dalek::VerifyingKey;
+
 use crate::database::Database;
 use crate::runtime::RuntimeState;
-use crate::telegram;
+use crate::{config, crypto, telegram};
 use context::Ctx;
 use manifest::{ModuleInfo, ModuleManifest};
 
@@ -36,6 +38,7 @@ pub struct Loader {
     runtime: Arc<RuntimeState>,
     modules_dir: PathBuf,
     modules: RwLock<HashMap<String, Module>>,
+    verifying_key: Option<VerifyingKey>,
 }
 
 impl Loader {
@@ -45,12 +48,20 @@ impl Loader {
         runtime: Arc<RuntimeState>,
         modules_dir: impl AsRef<Path>,
     ) -> Result<Self> {
+        let verifying_key =
+            crypto::load_verifying_key(Path::new(config::SIGNING_PUB_KEY_FILE)).unwrap_or_else(
+                |e| {
+                    warn!("could not load signing public key: {e}");
+                    None
+                },
+            );
         Ok(Self {
             lua: Arc::new(Lua::new()),
             db,
             runtime,
             modules_dir: modules_dir.as_ref().to_path_buf(),
             modules: RwLock::new(HashMap::new()),
+            verifying_key,
         })
     }
 
@@ -88,7 +99,14 @@ impl Loader {
             .with_context(|| format!("reading {path:?}"))?;
 
         let static_commands = manifest::module_commands(&source);
-        let manifest = manifest::load_manifest(path, &name, static_commands, &source).await?;
+        let manifest = manifest::load_manifest(
+            path,
+            &name,
+            static_commands,
+            &source,
+            self.verifying_key.as_ref(),
+        )
+        .await?;
         let table: Table = if manifest.trusted {
             self.lua
                 .load(&source)

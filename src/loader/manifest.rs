@@ -1,8 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleManifest {
@@ -25,6 +29,8 @@ pub struct ModuleManifest {
     pub min_core_version: Option<String>,
     #[serde(default)]
     pub trusted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,6 +57,7 @@ impl ModuleManifest {
             checksum: None,
             min_core_version: None,
             trusted: false,
+            signature: None,
         }
     }
 
@@ -75,6 +82,7 @@ pub async fn load_manifest(
     fallback_name: &str,
     commands: Vec<String>,
     source: &str,
+    verifying_key: Option<&VerifyingKey>,
 ) -> Result<ModuleManifest> {
     let manifest_path = manifest_path(module_path);
     if !manifest_path.exists() {
@@ -88,9 +96,24 @@ pub async fn load_manifest(
     let raw = tokio::fs::read_to_string(&manifest_path)
         .await
         .with_context(|| format!("reading manifest {manifest_path:?}"))?;
-    let manifest = serde_json::from_str::<ModuleManifest>(&raw)
+    let mut manifest = serde_json::from_str::<ModuleManifest>(&raw)
         .with_context(|| format!("parsing manifest {manifest_path:?}"))?;
-    Ok(manifest.normalized(fallback_name, commands))
+    manifest = manifest.normalized(fallback_name, commands);
+
+    if manifest.trusted {
+        let ok = verifying_key
+            .map(|vk| verify_trusted(&manifest, source, vk))
+            .unwrap_or(false);
+        if !ok {
+            tracing::warn!(
+                "module '{}': trusted flag cleared — missing or invalid signature",
+                manifest.name
+            );
+            manifest.trusted = false;
+        }
+    }
+
+    Ok(manifest)
 }
 
 pub async fn write_generated_manifest(
@@ -117,6 +140,7 @@ pub async fn write_generated_manifest(
         checksum: None,
         min_core_version: None,
         trusted: false,
+        signature: None,
     };
     let path = manifest_path(&module_path);
     let raw = serde_json::to_string_pretty(&manifest)
@@ -242,6 +266,61 @@ pub fn required_modules(source: &str) -> Vec<String> {
         }
     }
     modules
+}
+
+/// Returns the hex-encoded SHA-256 of the given source string.
+pub fn source_sha256(source: &str) -> String {
+    let hash = Sha256::digest(source.as_bytes());
+    hash.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Builds the deterministic JSON payload that is signed / verified.
+///
+/// Keys are sorted lexicographically (via BTreeMap) for a stable byte sequence.
+pub fn signing_payload(manifest: &ModuleManifest, sha256: &str) -> Vec<u8> {
+    let mut map: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
+    map.insert("name", serde_json::Value::String(manifest.name.clone()));
+    map.insert(
+        "permissions",
+        serde_json::Value::Array(
+            manifest
+                .permissions
+                .iter()
+                .map(|p| serde_json::Value::String(p.clone()))
+                .collect(),
+        ),
+    );
+    map.insert(
+        "source_sha256",
+        serde_json::Value::String(sha256.to_string()),
+    );
+    map.insert("trusted", serde_json::Value::Bool(true));
+    map.insert(
+        "version",
+        serde_json::Value::String(manifest.version.clone()),
+    );
+    serde_json::to_vec(&map).expect("BTreeMap serialization is infallible")
+}
+
+/// Returns `true` iff the manifest carries a valid Ed25519 signature that covers
+/// the source file hash, name, version, permissions, and the trusted flag.
+pub fn verify_trusted(manifest: &ModuleManifest, source: &str, vk: &VerifyingKey) -> bool {
+    if !manifest.trusted {
+        return false;
+    }
+    let Some(ref sig_b64) = manifest.signature else {
+        return false;
+    };
+    let sha256 = source_sha256(source);
+    let payload = signing_payload(manifest, &sha256);
+    let Ok(sig_bytes) = STANDARD.decode(sig_b64) else {
+        return false;
+    };
+    let Ok(sig_arr): Result<[u8; 64], _> = sig_bytes.try_into() else {
+        return false;
+    };
+    let sig = Signature::from_bytes(&sig_arr);
+    vk.verify(&payload, &sig).is_ok()
 }
 
 fn default_version() -> String {
@@ -396,5 +475,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn manifest_signature_roundtrip() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use rand::rngs::OsRng;
+
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+
+        let source = "-- test\n";
+        let sha256 = source_sha256(source);
+
+        let mut manifest = ModuleManifest {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            description: String::new(),
+            commands: Vec::new(),
+            permissions: vec!["shell".to_string()],
+            dependencies: Vec::new(),
+            source: None,
+            checksum: None,
+            min_core_version: None,
+            trusted: true,
+            signature: None,
+        };
+
+        let payload = signing_payload(&manifest, &sha256);
+        let sig = sk.sign(&payload).to_bytes();
+        manifest.signature = Some(STANDARD.encode(sig));
+
+        assert!(verify_trusted(&manifest, source, &vk), "valid sig should verify");
+
+        // Tampered permissions invalidate the signature.
+        manifest.permissions.push("network".to_string());
+        assert!(!verify_trusted(&manifest, source, &vk), "bad perms should fail");
+
+        // Restore permissions but change source.
+        manifest.permissions.pop();
+        assert!(
+            !verify_trusted(&manifest, "-- different source\n", &vk),
+            "different source should fail"
+        );
     }
 }

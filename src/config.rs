@@ -10,6 +10,12 @@ pub const DEFAULT_SESSION_FILE: &str = "fly-telegram.session";
 /// Encrypted default Telegram session path.
 pub const DEFAULT_SESSION_ENCRYPTED_FILE: &str = "fly-telegram.session.enc";
 
+/// Ed25519 signing public key (raw 32 bytes).
+pub const SIGNING_PUB_KEY_FILE: &str = "keys/signing.pub";
+
+/// Ed25519 signing private key (encrypted with master password).
+pub const SIGNING_KEY_ENC_FILE: &str = "keys/signing.key.enc";
+
 /// Directory containing hot-reloaded Lua modules.
 pub const MODULES_DIR: &str = "modules";
 
