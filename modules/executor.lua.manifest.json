@@ -1,0 +1,8 @@
+{
+  "name": "executor",
+  "version": "1.1.0",
+  "description": "Lua evaluation and shell command execution.",
+  "commands": ["eval", "e", "term"],
+  "permissions": ["shell"],
+  "trusted": true
+}

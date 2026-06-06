@@ -16,6 +16,7 @@ use tracing::info;
 use crate::client::auth::PendingAuth;
 use crate::config::{db_key, DEFAULT_SESSION_FILE, SESSIONS_DIR, SOCKS5_SCHEME};
 use crate::database::Database;
+use crate::loader::manifest::ModuleInfo;
 use crate::loader::Loader;
 use crate::runtime::{AccountRuntime, RuntimeState};
 
@@ -146,6 +147,7 @@ struct StatusResponse {
     updates_seen: u64,
     commands_seen: u64,
     modules: Vec<String>,
+    module_details: Vec<ModuleInfo>,
     module_count: usize,
     db_encrypted: bool,
     proxy_url: Option<String>,
@@ -370,6 +372,10 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
         Some(loader) => loader.module_names().await,
         None => Vec::new(),
     };
+    let module_details = match state.loader.as_ref() {
+        Some(loader) => loader.module_info().await,
+        None => Vec::new(),
+    };
     let proxy_url = optional_db_string(&state.db, db_key::PROXY_URL).await;
     let response = StatusResponse {
         uptime_seconds: runtime.uptime_seconds(),
@@ -380,6 +386,7 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
         commands_seen: runtime.commands_seen(),
         module_count: modules.len(),
         modules,
+        module_details,
         db_encrypted: state.db.encryption_enabled().await,
         proxy_url,
     };

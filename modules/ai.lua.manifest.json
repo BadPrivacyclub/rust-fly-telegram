@@ -1,0 +1,8 @@
+{
+  "name": "ai",
+  "version": "0.1.0",
+  "description": "Multi-provider AI ask, summarize, translate, and Whisper transcription helpers.",
+  "commands": ["ai", "ask", "summarize", "transcribe", "translate"],
+  "permissions": ["network", "secrets", "telegram.media"],
+  "trusted": true
+}

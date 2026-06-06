@@ -1,0 +1,8 @@
+{
+  "name": "automation",
+  "version": "1.0.0",
+  "description": "Safe dry-run automation controls for gifts and task-specific marketplace hooks.",
+  "commands": ["gifts", "taskbot"],
+  "permissions": ["network"],
+  "trusted": true
+}

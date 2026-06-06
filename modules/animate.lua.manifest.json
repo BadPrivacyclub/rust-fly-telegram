@@ -1,0 +1,8 @@
+{
+  "name": "animate",
+  "version": "1.0.0",
+  "description": "Short text edit animations.",
+  "commands": ["type", "scroll", "magic", "heart"],
+  "permissions": [],
+  "trusted": true
+}

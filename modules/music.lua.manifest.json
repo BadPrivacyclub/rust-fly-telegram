@@ -1,0 +1,8 @@
+{
+  "name": "music",
+  "version": "0.1.0",
+  "description": "Controls an external voice chat music worker.",
+  "commands": ["play", "vplay", "queue", "skip", "seek", "loop", "shuffle", "stop", "toptracks"],
+  "permissions": ["network"],
+  "trusted": true
+}

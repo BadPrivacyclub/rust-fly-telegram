@@ -1,0 +1,8 @@
+{
+  "name": "tools",
+  "version": "1.0.0",
+  "description": "Delete, info, self-destruct, and yt-dlp helper commands.",
+  "commands": ["del", "info", "sd", "ytdl"],
+  "permissions": ["shell", "telegram.history"],
+  "trusted": true
+}

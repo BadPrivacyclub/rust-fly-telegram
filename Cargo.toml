@@ -7,6 +7,10 @@ edition = "2021"
 name = "fly-telegram"
 path = "src/main.rs"
 
+[[bin]]
+name = "music-worker"
+path = "src/music_worker.rs"
+
 [dependencies]
 # Telegram userbot (MTProto)
 grammers-client   = { version = "0.9", features = ["fs", "markdown"] }
@@ -42,7 +46,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow    = "1"
 thiserror = "2"
 uuid      = { version = "1", features = ["v4"] }
-reqwest   = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest   = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
 argon2    = "0.5"
 base64    = "0.22"
 chacha20poly1305 = "0.10"

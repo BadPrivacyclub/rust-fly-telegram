@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use grammers_client::tl;
 use grammers_client::update::{Message, MessageDeletion, Update};
+use grammers_session::types::PeerKind;
+use rand::Rng;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -212,6 +215,18 @@ async fn handle_new_message_events(
         return Ok(());
     }
 
+    if handle_group_captcha(&db, &runtime, &client, &msg).await? {
+        return Ok(());
+    }
+
+    if handle_group_service_cleanup(&db, &runtime, &client, &msg).await? {
+        return Ok(());
+    }
+
+    if handle_pm_guard(&db, &runtime, &client, &msg).await? {
+        return Ok(());
+    }
+
     if db_bool(&db, "handlers.autoread.enabled").await {
         telegram::mark_message_as_read(&msg, &runtime).await?;
     }
@@ -225,6 +240,160 @@ async fn handle_new_message_events(
     }
 
     Ok(())
+}
+
+async fn handle_group_captcha(
+    db: &Database,
+    runtime: &RuntimeState,
+    client: &grammers_client::Client,
+    msg: &Message,
+) -> Result<bool> {
+    if !db_bool(db, "group.captcha.enabled").await {
+        return Ok(false);
+    }
+    if !matches!(msg.peer_id().kind(), PeerKind::Chat | PeerKind::Channel) {
+        return Ok(false);
+    }
+
+    if let Some(action) = msg.action() {
+        let joined = joined_user_ids(action, msg.sender_id().map(|id| id.bot_api_dialog_id()));
+        if joined.is_empty() {
+            return Ok(false);
+        }
+        let peer_ref = telegram::resolve_message_peer(client, msg).await?;
+        for user_id in joined {
+            let code = rand::thread_rng().gen_range(1000..=9999).to_string();
+            let key = captcha_key(msg.peer_id().bot_api_dialog_id(), user_id);
+            db.set(&key, serde_json::Value::String(code.clone()))
+                .await?;
+            let text = optional_db_string(db, "group.captcha.text")
+                .await
+                .unwrap_or_else(|| "Welcome. Send this code to pass CAPTCHA: {code}".to_string())
+                .replace("{code}", &code)
+                .replace("{user_id}", &user_id.to_string());
+            telegram::send_text(client, runtime, peer_ref, &text).await?;
+        }
+        return Ok(false);
+    }
+
+    let Some(sender_id) = msg.sender_id().map(|id| id.bot_api_dialog_id()) else {
+        return Ok(false);
+    };
+    let key = captcha_key(msg.peer_id().bot_api_dialog_id(), sender_id);
+    let pending = db.get(&key).await;
+    let Some(code) = pending.as_str().map(str::to_string) else {
+        return Ok(false);
+    };
+
+    let peer_ref = telegram::resolve_message_peer(client, msg).await?;
+    if msg.text().trim() == code {
+        db.remove(&key).await?;
+        telegram::reply_text(client, runtime, peer_ref, msg.id(), "CAPTCHA passed.").await?;
+    } else {
+        telegram::delete_messages(client, runtime, peer_ref, &[msg.id()]).await?;
+    }
+    Ok(true)
+}
+
+async fn handle_group_service_cleanup(
+    db: &Database,
+    runtime: &RuntimeState,
+    client: &grammers_client::Client,
+    msg: &Message,
+) -> Result<bool> {
+    if !db_bool(db, "group.clean_joins.enabled").await {
+        return Ok(false);
+    }
+    if !matches!(msg.peer_id().kind(), PeerKind::Chat | PeerKind::Channel) {
+        return Ok(false);
+    }
+    let Some(action) = msg.action() else {
+        return Ok(false);
+    };
+    if !is_join_leave_action(action) {
+        return Ok(false);
+    }
+    let peer_ref = telegram::resolve_message_peer(client, msg).await?;
+    telegram::delete_messages(client, runtime, peer_ref, &[msg.id()]).await?;
+    Ok(true)
+}
+
+fn is_join_leave_action(action: &tl::enums::MessageAction) -> bool {
+    matches!(
+        action,
+        tl::enums::MessageAction::ChatAddUser(_)
+            | tl::enums::MessageAction::ChatDeleteUser(_)
+            | tl::enums::MessageAction::ChatJoinedByLink(_)
+            | tl::enums::MessageAction::ChatJoinedByRequest
+    )
+}
+
+fn joined_user_ids(action: &tl::enums::MessageAction, fallback_sender: Option<i64>) -> Vec<i64> {
+    match action {
+        tl::enums::MessageAction::ChatAddUser(action) => action.users.clone(),
+        tl::enums::MessageAction::ChatJoinedByLink(_)
+        | tl::enums::MessageAction::ChatJoinedByRequest => fallback_sender.into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn captcha_key(chat_id: i64, user_id: i64) -> String {
+    format!("group.captcha.pending.{chat_id}.{user_id}")
+}
+
+async fn handle_pm_guard(
+    db: &Database,
+    runtime: &RuntimeState,
+    client: &grammers_client::Client,
+    msg: &Message,
+) -> Result<bool> {
+    if !db_bool(db, "pmguard.enabled").await {
+        return Ok(false);
+    }
+    if !matches!(msg.peer_id().kind(), PeerKind::User) {
+        return Ok(false);
+    }
+
+    let Some(sender_id) = msg.sender_id() else {
+        return Ok(false);
+    };
+    let sender = sender_id.bot_api_dialog_id().to_string();
+    if csv_contains(
+        optional_db_string(db, "pmguard.allow").await.as_deref(),
+        &sender,
+    ) {
+        return Ok(false);
+    }
+
+    let peer_ref = telegram::resolve_message_peer(client, msg).await?;
+    if csv_contains(
+        optional_db_string(db, "pmguard.deny").await.as_deref(),
+        &sender,
+    ) {
+        let key = format!("pmguard.denied_seen.{sender}");
+        if !db_bool(db, &key).await {
+            let text = optional_db_string(db, "pmguard.deny_text")
+                .await
+                .unwrap_or_else(|| "PM blocked by userbot security.".to_string());
+            telegram::reply_text(client, runtime, peer_ref, msg.id(), &text).await?;
+            db.set(key, serde_json::Value::Bool(true)).await?;
+        }
+        return Ok(true);
+    }
+
+    let key = format!("pmguard.challenge_seen.{sender}");
+    if db_bool(db, &key).await {
+        return Ok(true);
+    }
+
+    let text = optional_db_string(db, "pmguard.challenge_text")
+        .await
+        .unwrap_or_else(|| {
+            "Hi. PM security is enabled. Please wait until I approve this chat.".to_string()
+        });
+    telegram::reply_text(client, runtime, peer_ref, msg.id(), &text).await?;
+    db.set(key, serde_json::Value::Bool(true)).await?;
+    Ok(true)
 }
 
 async fn handle_deleted_messages(
@@ -305,4 +474,12 @@ async fn optional_db_string(db: &Database, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn csv_contains(values: Option<&str>, needle: &str) -> bool {
+    values
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .any(|value| value == needle)
 }

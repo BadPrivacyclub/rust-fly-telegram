@@ -1,0 +1,8 @@
+{
+  "name": "group",
+  "version": "1.0.0",
+  "description": "Group management controls backed by Rust event handlers.",
+  "commands": ["cleanjoins", "captcha", "group"],
+  "permissions": [],
+  "trusted": true
+}

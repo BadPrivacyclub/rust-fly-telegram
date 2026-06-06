@@ -12,17 +12,21 @@ use tracing::{error, info, warn};
 
 pub mod context;
 mod installer;
+pub mod manifest;
 
 use crate::database::Database;
 use crate::runtime::RuntimeState;
 use crate::telegram;
 use context::Ctx;
+use manifest::{ModuleInfo, ModuleManifest};
 
 /// A loaded Lua module and its registered command → handler mappings.
 struct Module {
     table: Table,
     /// Command name (without prefix) → handler function name in the table.
     commands: HashMap<String, String>,
+    manifest: ModuleManifest,
+    source: String,
 }
 
 /// Manages loading, unloading, and dispatching to Lua modules.
@@ -83,21 +87,35 @@ impl Loader {
             .await
             .with_context(|| format!("reading {path:?}"))?;
 
-        let table: Table = self
-            .lua
-            .load(&source)
-            .set_name(&name)
-            .eval()
-            .with_context(|| format!("executing {path:?}"))?;
-
+        let static_commands = manifest::module_commands(&source);
+        let manifest = manifest::load_manifest(path, &name, static_commands, &source).await?;
+        let table: Table = if manifest.trusted {
+            self.lua
+                .load(&source)
+                .set_name(&name)
+                .eval()
+                .with_context(|| format!("executing {path:?}"))?
+        } else {
+            self.lua
+                .load(&source)
+                .set_name(&name)
+                .set_environment(sandbox_environment(&self.lua)?)
+                .eval()
+                .with_context(|| format!("executing sandboxed {path:?}"))?
+        };
         let commands = collect_commands(&table)?;
 
         info!("loaded module '{name}' with {} command(s)", commands.len());
 
-        self.modules
-            .write()
-            .await
-            .insert(name, Module { table, commands });
+        self.modules.write().await.insert(
+            name,
+            Module {
+                table,
+                commands,
+                manifest,
+                source,
+            },
+        );
 
         Ok(())
     }
@@ -130,18 +148,20 @@ impl Loader {
         let cmd = parts.next().unwrap_or("").to_lowercase();
         let args = parts.next().unwrap_or("").to_string();
 
-        let ctx = Ctx::new(
-            client.clone(),
-            Arc::clone(&self.db),
-            Arc::clone(&self.runtime),
-            self.modules_dir.clone(),
-        )
-        .with_message(msg.clone());
-
         let modules = self.modules.read().await;
 
         for module in modules.values() {
             if let Some(handler_name) = module.commands.get(&cmd) {
+                let ctx = Ctx::new(
+                    client.clone(),
+                    Arc::clone(&self.db),
+                    Arc::clone(&self.runtime),
+                    self.modules_dir.clone(),
+                    module.manifest.name.clone(),
+                    module.manifest.permissions.clone(),
+                    module.manifest.trusted,
+                )
+                .with_message(msg.clone());
                 let handler: Function =
                     module.table.get(handler_name.as_str()).with_context(|| {
                         format!("handler '{handler_name}' not found in module table")
@@ -176,6 +196,19 @@ impl Loader {
         names
     }
 
+    /// Returns dashboard-ready module metadata.
+    pub async fn module_info(&self) -> Vec<ModuleInfo> {
+        let mut modules = self
+            .modules
+            .read()
+            .await
+            .values()
+            .map(|module| manifest::module_info(&module.manifest, &module.commands, &module.source))
+            .collect::<Vec<_>>();
+        modules.sort_by(|left, right| left.name.cmp(&right.name));
+        modules
+    }
+
     async fn handle_builtin_command(
         &self,
         client: &Client,
@@ -196,6 +229,22 @@ impl Loader {
 
         Ok(true)
     }
+}
+
+fn sandbox_environment(lua: &Lua) -> Result<Table> {
+    let globals = lua.globals();
+    let env = lua.create_table()?;
+    for name in [
+        "assert", "error", "ipairs", "next", "pairs", "pcall", "select", "tonumber", "tostring",
+        "type", "xpcall",
+    ] {
+        env.set(name, globals.get::<mlua::Value>(name)?)?;
+    }
+    for name in ["coroutine", "math", "string", "table", "utf8"] {
+        env.set(name, globals.get::<Table>(name)?)?;
+    }
+    env.set("_G", env.clone())?;
+    Ok(env)
 }
 
 async fn is_own_command_message(client: &Client, msg: &Message) -> bool {
@@ -229,6 +278,15 @@ Base commands:
 .afk on [text]|off - auto-reply when mentioned
 .autoread on|off - mark incoming messages as read
 .antidelete on|off - log deleted cached messages
+.pmguard on|off|status - private message security
+.market search|info|install - module marketplace
+.ip <ip>, .domain <domain>, .rdap <domain> - OSINT lookups
+.dl, .sendfile, .urlupload, .rename - file tools
+.type <text>, .scroll <text>, .magic <text>, .heart [text] - text animations
+.ai provider <name>, .ask, .summarize, .translate, .transcribe - multi-provider AI helper
+.cleanjoins on|off|status, .captcha on|off|status - group protection
+.gifts, .taskbot - dry-run automation hooks
+.play <query>, .queue, .skip, .stop - external music worker controls
 .eval <code> - evaluate Lua code
 .term <command> - run a shell command
 

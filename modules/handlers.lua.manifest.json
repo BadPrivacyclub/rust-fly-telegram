@@ -1,0 +1,8 @@
+{
+  "name": "handlers",
+  "version": "1.0.0",
+  "description": "Controls AFK, autoread, and anti-delete handlers.",
+  "commands": ["afk", "autoread", "antidelete"],
+  "permissions": [],
+  "trusted": true
+}

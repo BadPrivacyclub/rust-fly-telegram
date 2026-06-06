@@ -1,0 +1,8 @@
+{
+  "name": "updater",
+  "version": "1.1.0",
+  "description": "Restarts and updates the userbot process.",
+  "commands": ["restart", "update"],
+  "permissions": ["shell"],
+  "trusted": true
+}

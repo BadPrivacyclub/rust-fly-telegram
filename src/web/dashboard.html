@@ -243,10 +243,22 @@
         // Modules updates (Pills layout)
         const modules = document.getElementById("modules");
         modules.innerHTML = "";
-        data.modules.forEach(name => {
+        const moduleItems = data.module_details && data.module_details.length
+          ? data.module_details
+          : (data.modules || []).map(name => ({ name, trusted: true, permissions: [] }));
+        moduleItems.forEach(module => {
           const item = document.createElement("span");
-          item.className = "bg-slate-700/50 border border-slate-600 text-slate-300 px-2.5 py-1 rounded-md text-xs font-medium";
-          item.textContent = name;
+          item.className = module.trusted
+            ? "bg-emerald-500/10 border border-emerald-500/25 text-emerald-200 px-2.5 py-1 rounded-md text-xs font-medium"
+            : "bg-amber-500/10 border border-amber-500/25 text-amber-200 px-2.5 py-1 rounded-md text-xs font-medium";
+          const permissions = module.permissions && module.permissions.length
+            ? `permissions: ${module.permissions.join(", ")}`
+            : "permissions: none";
+          const audit = module.audit && module.audit.length
+            ? `audit: ${module.audit.join(", ")}`
+            : "audit: clean";
+          item.textContent = module.name;
+          item.title = `${module.description || module.name}\n${permissions}\n${audit}`;
           modules.appendChild(item);
         });
 

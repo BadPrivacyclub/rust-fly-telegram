@@ -1,0 +1,8 @@
+{
+  "name": "osint",
+  "version": "1.0.0",
+  "description": "IP, DNS, and RDAP lookup helpers.",
+  "commands": ["ip", "domain", "rdap"],
+  "permissions": ["network"],
+  "trusted": true
+}

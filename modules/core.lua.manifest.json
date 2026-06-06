@@ -1,0 +1,8 @@
+{
+  "name": "core",
+  "version": "1.2.0",
+  "description": "Runtime checks and ping command.",
+  "commands": ["ping"],
+  "permissions": [],
+  "trusted": true
+}

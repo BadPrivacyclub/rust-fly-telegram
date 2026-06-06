@@ -1,0 +1,8 @@
+{
+  "name": "aliases",
+  "version": "1.0.0",
+  "description": "Stores and retrieves text aliases.",
+  "commands": ["alias"],
+  "permissions": [],
+  "trusted": true
+}

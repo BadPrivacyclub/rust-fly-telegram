@@ -4,6 +4,7 @@ use grammers_client::media::Media;
 use grammers_client::message::Message as FullMessage;
 
 use super::context::Ctx;
+use super::manifest;
 
 const MODULE_DOWNLOAD_DIR: &str = "module-downloads";
 
@@ -14,7 +15,12 @@ pub(super) async fn install_module(
 ) -> mlua::Result<String> {
     let content = read_module_source(&source).await?;
     let file_name = module_file_name(&source, name.as_deref())?;
-    install_module_content(&ctx.modules_dir, &file_name, &content).await
+    let source_url = if source.starts_with("https://") || source.starts_with("http://") {
+        Some(source)
+    } else {
+        None
+    };
+    install_module_content(&ctx.modules_dir, &file_name, &content, source_url).await
 }
 
 pub(super) async fn install_replied_module(
@@ -42,7 +48,7 @@ pub(super) async fn install_replied_module(
 
     let content = tokio::fs::read_to_string(&download_path).await?;
     let _ = tokio::fs::remove_file(&download_path).await;
-    install_module_content(&ctx.modules_dir, &file_name, &content)
+    install_module_content(&ctx.modules_dir, &file_name, &content, None)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
@@ -120,6 +126,7 @@ async fn install_module_content(
     modules_dir: &Path,
     file_name: &str,
     content: &str,
+    source_url: Option<String>,
 ) -> mlua::Result<String> {
     validate_module_syntax(file_name, content)?;
     validate_module_dependencies(modules_dir, content).await?;
@@ -132,11 +139,14 @@ async fn install_module_content(
     tokio::fs::write(&target, content)
         .await
         .map_err(|error| mlua::Error::runtime(error.to_string()))?;
+    let manifest_path =
+        manifest::write_generated_manifest(modules_dir, file_name, source_url, content).await?;
 
     let summary = summarize_module(file_name, content);
     Ok(format!(
-        "**Module installed**  \nPath: `{}`\n\n{}",
+        "**Module installed**  \nPath: `{}`  \nManifest: `{}`\n\n{}",
         target.to_string_lossy(),
+        manifest_path.to_string_lossy(),
         summary
     ))
 }
@@ -152,7 +162,7 @@ fn validate_module_syntax(file_name: &str, content: &str) -> mlua::Result<()> {
 
 async fn validate_module_dependencies(modules_dir: &Path, source: &str) -> mlua::Result<()> {
     let mut missing = Vec::new();
-    for dependency in required_modules(source) {
+    for dependency in manifest::required_modules(source) {
         if is_lua_builtin(&dependency) {
             continue;
         }
@@ -174,8 +184,8 @@ async fn validate_module_dependencies(modules_dir: &Path, source: &str) -> mlua:
 }
 
 fn summarize_module(file_name: &str, source: &str) -> String {
-    let commands = module_commands(source);
-    let capabilities = module_capabilities(source);
+    let commands = manifest::module_commands(source);
+    let capabilities = manifest::audit_source(source);
     let commands = if commands.is_empty() {
         "**Commands:** `not declared`".to_string()
     } else {
@@ -184,99 +194,12 @@ fn summarize_module(file_name: &str, source: &str) -> String {
     let capabilities = if capabilities.is_empty() {
         "**Capabilities:** `no risky capabilities detected`".to_string()
     } else {
-        format!("**Capabilities:** `{}`", capabilities.join("`, `"))
+        format!(
+            "**Requested permissions:** `{}`  \nReview the generated manifest before granting them.",
+            capabilities.join("`, `")
+        )
     };
     format!("**Name:** `{file_name}`  \n{commands}  \n{capabilities}")
-}
-
-fn module_commands(source: &str) -> Vec<String> {
-    let mut commands = Vec::new();
-    for line in source.lines() {
-        let line = line.trim();
-        if line.starts_with("--") || !line.contains('=') {
-            continue;
-        }
-        if let Some((name, _handler)) = line.split_once('=') {
-            let name = name.trim().trim_matches(['[', ']', '"', '\'']);
-            if is_valid_command_name(name) && !commands.contains(&name.to_string()) {
-                commands.push(name.to_string());
-            }
-        }
-    }
-    commands
-}
-
-fn is_valid_command_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 32
-        && name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
-}
-
-fn module_capabilities(source: &str) -> Vec<String> {
-    let lower = source.to_lowercase();
-    let mut capabilities = Vec::new();
-    push_capability(
-        &mut capabilities,
-        lower.contains("io.") || lower.contains("require(\"io\"") || lower.contains("require 'io'"),
-        "has file access",
-    );
-    push_capability(
-        &mut capabilities,
-        lower.contains("os.execute")
-            || lower.contains("ctx:run_term")
-            || lower.contains("powershell")
-            || lower.contains("cmd /c"),
-        "can run shell commands",
-    );
-    push_capability(
-        &mut capabilities,
-        lower.contains("screenshot")
-            || lower.contains("screencapture")
-            || lower.contains("gnome-screenshot"),
-        "can take screenshots",
-    );
-    push_capability(
-        &mut capabilities,
-        lower.contains("http://") || lower.contains("https://"),
-        "uses network URLs",
-    );
-    capabilities
-}
-
-fn push_capability(capabilities: &mut Vec<String>, condition: bool, name: &str) {
-    if condition {
-        capabilities.push(name.to_string());
-    }
-}
-
-fn required_modules(source: &str) -> Vec<String> {
-    let mut modules = Vec::new();
-    for line in source.lines() {
-        let line = line.trim();
-        for quote in ['"', '\''] {
-            let Some(start) = line
-                .find(&format!("require({quote}"))
-                .or_else(|| line.find(&format!("require {quote}")))
-            else {
-                continue;
-            };
-            let after = &line[start..];
-            let Some(first_quote) = after.find(quote) else {
-                continue;
-            };
-            let rest = &after[first_quote + 1..];
-            let Some(end_quote) = rest.find(quote) else {
-                continue;
-            };
-            let module = rest[..end_quote].replace('.', "/");
-            if !module.is_empty() && !modules.contains(&module) {
-                modules.push(module);
-            }
-        }
-    }
-    modules
 }
 
 fn is_lua_builtin(name: &str) -> bool {

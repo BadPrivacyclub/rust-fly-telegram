@@ -76,8 +76,11 @@ Every handler receives `ctx` as its first argument. The following methods are av
 | `ctx:reply(text)` | Send a new message in the same chat |
 | `ctx:delete()` | Delete the command message |
 | `ctx:install_module(source, name)` | Install a `.lua` module from a file or URL |
+| `ctx:download_replied_media(name)` | Save media from the replied message under `data/downloads/` |
+| `ctx:download_url(url, name)` | Download an HTTP(S) URL under `data/downloads/` |
+| `ctx:send_file(path, caption)` | Upload and send a relative local file path |
 
-All three methods are **async** — Lua awaits them automatically inside a handler.
+These methods are **async** — Lua awaits them automatically inside a handler.
 
 ### Database
 
@@ -87,6 +90,43 @@ All three methods are **async** — Lua awaits them automatically inside a handl
 | `ctx:db_set(key, value)` | Stores `value` under `key` and flushes to disk |
 
 Supported value types for `db_set`: `string`, `number` (integer), `boolean`.
+
+### Network, secrets, and runtime
+
+| Method | Description |
+|---|---|
+| `ctx:http_get(url)` | Fetches a small text response |
+| `ctx:http_json_get(url)` | Fetches and decodes JSON |
+| `ctx:http_request(method, url, body, headers)` | Sends a small HTTP request |
+| `ctx:http_json_request(method, url, body, headers)` | Sends an HTTP request and decodes JSON |
+| `ctx:http_json_multipart_file_request(method, url, file_field, path, fields, headers)` | Uploads a relative local file as multipart form data and decodes JSON |
+| `ctx:env_get(name)` | Reads an environment variable |
+| `ctx:message_text()` | Returns the current message text |
+| `ctx:replied_text()` | Returns replied message text, if any |
+| `ctx:sleep_ms(ms)` | Sleeps for milliseconds |
+
+Network responses are size-limited. URL/file helpers reject absolute paths and
+`..` path components.
+
+### Module manifests and permissions
+
+Public modules should ship a sibling manifest:
+
+```json
+{
+  "name": "example",
+  "version": "1.0.0",
+  "description": "Example module",
+  "commands": ["example"],
+  "permissions": ["network"],
+  "trusted": false
+}
+```
+
+Supported permissions include `network`, `shell`, `telegram.media`,
+`telegram.history`, `modules.install`, and `secrets`. Built-in modules are
+trusted; installed public modules default to `trusted: false` with no granted
+permissions until reviewed.
 
 ### Installing modules from Lua
 

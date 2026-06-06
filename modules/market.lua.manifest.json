@@ -1,0 +1,8 @@
+{
+  "name": "market",
+  "version": "1.0.0",
+  "description": "Curated marketplace search and install client.",
+  "commands": ["market"],
+  "permissions": ["network", "modules.install"],
+  "trusted": true
+}

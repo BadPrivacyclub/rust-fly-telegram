@@ -1,0 +1,8 @@
+{
+  "name": "pmguard",
+  "version": "1.0.0",
+  "description": "Controls PM security auto-replies for unknown private messages.",
+  "commands": ["pmguard"],
+  "permissions": [],
+  "trusted": true
+}

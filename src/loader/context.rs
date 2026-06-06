@@ -1,8 +1,9 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use grammers_client::media::Media;
-use grammers_client::message::Message as TelegramMessage;
+use grammers_client::message::{InputMessage, Message as TelegramMessage};
 use grammers_client::peer::Peer;
 use grammers_client::tl;
 use grammers_client::update::Message;
@@ -32,6 +33,9 @@ pub struct Ctx {
     pub db: Arc<Database>,
     pub runtime: Arc<RuntimeState>,
     pub(super) modules_dir: std::path::PathBuf,
+    module_name: String,
+    permissions: Vec<String>,
+    trusted: bool,
     /// The message that triggered the current handler.
     pub message: Arc<Mutex<Option<Message>>>,
 }
@@ -42,12 +46,18 @@ impl Ctx {
         db: Arc<Database>,
         runtime: Arc<RuntimeState>,
         modules_dir: std::path::PathBuf,
+        module_name: String,
+        permissions: Vec<String>,
+        trusted: bool,
     ) -> Self {
         Self {
             client,
             db,
             runtime,
             modules_dir,
+            module_name,
+            permissions,
+            trusted,
             message: Arc::new(Mutex::new(None)),
         }
     }
@@ -56,6 +66,21 @@ impl Ctx {
         Self {
             message: Arc::new(Mutex::new(Some(msg))),
             ..self
+        }
+    }
+
+    fn has_permission(&self, permission: &str) -> bool {
+        self.trusted || self.permissions.iter().any(|value| value == permission)
+    }
+
+    fn require_permission(&self, permission: &str) -> mlua::Result<()> {
+        if self.has_permission(permission) {
+            Ok(())
+        } else {
+            Err(mlua::Error::runtime(format!(
+                "module '{}' needs permission '{}'",
+                self.module_name, permission
+            )))
         }
     }
 }
@@ -130,6 +155,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_module",
             |_, ctx, (source, name): (String, Option<String>)| async move {
+                ctx.require_permission("modules.install")?;
                 installer::install_module(&ctx, source, name).await
             },
         );
@@ -137,6 +163,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_replied_module",
             |_, ctx, name: Option<String>| async move {
+                ctx.require_permission("modules.install")?;
                 installer::install_replied_module(ctx.clone(), name)
                     .await
                     .map_err(|e| mlua::Error::runtime(e.to_string()))
@@ -146,6 +173,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_plugin",
             |_, ctx, (source, name): (String, Option<String>)| async move {
+                ctx.require_permission("modules.install")?;
                 installer::install_module(&ctx, source, name).await
             },
         );
@@ -153,6 +181,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_replied_plugin",
             |_, ctx, name: Option<String>| async move {
+                ctx.require_permission("modules.install")?;
                 installer::install_replied_module(ctx.clone(), name)
                     .await
                     .map_err(|e| mlua::Error::runtime(e.to_string()))
@@ -182,25 +211,185 @@ impl UserData for Ctx {
             Ok(sanitize_text(&ctx, &text).await)
         });
 
+        methods.add_async_method("message_text", |_, ctx, ()| async move {
+            let guard = ctx.message.lock().await;
+            Ok(guard
+                .as_ref()
+                .map(|message| message.text().to_string())
+                .unwrap_or_default())
+        });
+
+        methods.add_async_method("replied_text", |_, ctx, ()| async move {
+            let guard = ctx.message.lock().await;
+            let Some(message) = guard.as_ref() else {
+                return Ok(String::new());
+            };
+            let reply = message
+                .get_reply()
+                .await
+                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            Ok(reply
+                .as_ref()
+                .map(|message| message.text().to_string())
+                .unwrap_or_default())
+        });
+
+        methods.add_method("module_info", |lua, ctx, ()| {
+            let info = serde_json::json!({
+                "name": ctx.module_name.clone(),
+                "permissions": ctx.permissions.clone(),
+                "trusted": ctx.trusted,
+            });
+            lua.to_value(&info)
+        });
+
+        methods.add_async_method("http_get", |_, ctx, url: String| async move {
+            ctx.require_permission("network")?;
+            http_get_text(&url)
+                .await
+                .map_err(|e| mlua::Error::runtime(e.to_string()))
+        });
+
+        methods.add_async_method("http_json_get", |lua, ctx, url: String| async move {
+            ctx.require_permission("network")?;
+            let text = http_get_text(&url)
+                .await
+                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            let value = serde_json::from_str::<serde_json::Value>(&text)
+                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            lua.to_value(&value)
+        });
+
+        methods.add_async_method(
+            "http_request",
+            |_,
+             ctx,
+             (method, url, body, headers): (
+                String,
+                String,
+                Option<String>,
+                Option<mlua::Table>,
+            )| async move {
+                ctx.require_permission("network")?;
+                let headers = header_pairs(headers)?;
+                http_request_text(&method, &url, body, headers)
+                    .await
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))
+            },
+        );
+
+        methods.add_async_method(
+            "http_json_request",
+            |lua,
+             ctx,
+             (method, url, body, headers): (
+                String,
+                String,
+                Option<String>,
+                Option<mlua::Table>,
+            )| async move {
+                ctx.require_permission("network")?;
+                let headers = header_pairs(headers)?;
+                let text = http_request_text(&method, &url, body, headers)
+                    .await
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+                let value = serde_json::from_str::<serde_json::Value>(&text)
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+                lua.to_value(&value)
+            },
+        );
+
+        methods.add_async_method(
+            "http_json_multipart_file_request",
+            |lua,
+             ctx,
+             (method, url, file_field, path, fields, headers): (
+                String,
+                String,
+                String,
+                String,
+                Option<mlua::Table>,
+                Option<mlua::Table>,
+            )| async move {
+                ctx.require_permission("network")?;
+                ctx.require_permission("telegram.media")?;
+                let fields = field_pairs(fields)?;
+                let headers = header_pairs(headers)?;
+                let text = http_multipart_file_request_text(
+                    &method,
+                    &url,
+                    &file_field,
+                    &path,
+                    fields,
+                    headers,
+                )
+                .await
+                .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+                let value = serde_json::from_str::<serde_json::Value>(&text)
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
+                lua.to_value(&value)
+            },
+        );
+
+        methods.add_method("env_get", |_, ctx, key: String| {
+            ctx.require_permission("secrets")?;
+            Ok(std::env::var(key).ok())
+        });
+
+        methods.add_async_method(
+            "download_replied_media",
+            |_, ctx, name: Option<String>| async move {
+                ctx.require_permission("telegram.media")?;
+                download_replied_media(ctx.clone(), name)
+                    .await
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))
+            },
+        );
+
+        methods.add_async_method(
+            "download_url",
+            |_, ctx, (url, name): (String, Option<String>)| async move {
+                ctx.require_permission("network")?;
+                ctx.require_permission("telegram.media")?;
+                download_url_to_file(&url, name.as_deref())
+                    .await
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))
+            },
+        );
+
+        methods.add_async_method(
+            "send_file",
+            |_, ctx, (path, caption): (String, Option<String>)| async move {
+                ctx.require_permission("telegram.media")?;
+                send_file(ctx.clone(), path, caption.unwrap_or_default())
+                    .await
+                    .map_err(|e| mlua::Error::runtime(e.to_string()))
+            },
+        );
+
         methods.add_async_method("run_term", |_, ctx, command: String| async move {
+            ctx.require_permission("shell")?;
             run_shell_command(ctx.clone(), command)
                 .await
                 .map_err(|e| mlua::Error::runtime(e.to_string()))
         });
 
         methods.add_async_method("update_project", |_, ctx, ()| async move {
+            ctx.require_permission("shell")?;
             update_project(ctx.clone())
                 .await
                 .map_err(|e| mlua::Error::runtime(e.to_string()))
         });
 
         methods.add_async_method("delete_last_own", |_, ctx, count: u32| async move {
+            ctx.require_permission("telegram.history")?;
             delete_last_own_messages(ctx.clone(), count)
                 .await
                 .map_err(|e| mlua::Error::runtime(e.to_string()))
         });
 
         methods.add_async_method("message_info", |_, ctx, ()| async move {
+            ctx.require_permission("telegram.history")?;
             build_message_info(ctx.clone())
                 .await
                 .map_err(|e| mlua::Error::runtime(e.to_string()))
@@ -210,7 +399,212 @@ impl UserData for Ctx {
             tokio::time::sleep(Duration::from_secs(seconds)).await;
             Ok(())
         });
+
+        methods.add_async_method("sleep_ms", |_, _, millis: u64| async move {
+            tokio::time::sleep(Duration::from_millis(millis)).await;
+            Ok(())
+        });
     }
+}
+
+async fn download_replied_media(ctx: Ctx, name: Option<String>) -> anyhow::Result<String> {
+    let guard = ctx.message.lock().await;
+    let Some(message) = guard.as_ref() else {
+        anyhow::bail!("No message context.");
+    };
+    let Some(reply) = message.get_reply().await? else {
+        anyhow::bail!("Reply to a message with downloadable media.");
+    };
+    let file_name = name
+        .as_deref()
+        .map(safe_file_name)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("media-{}.bin", uuid::Uuid::new_v4()));
+    let path = Path::new("data").join("downloads").join(file_name);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    if !reply.download_media(&path).await? {
+        anyhow::bail!("Replied message has no downloadable media.");
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+async fn download_url_to_file(url: &str, name: Option<&str>) -> anyhow::Result<String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        anyhow::bail!("URL must start with http:// or https://");
+    }
+    let file_name = name
+        .map(safe_file_name)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            url.rsplit('/')
+                .next()
+                .map(safe_file_name)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| format!("download-{}.bin", uuid::Uuid::new_v4()));
+    let path = Path::new("data").join("downloads").join(file_name);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()?;
+    let bytes = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    if bytes.len() > 50 * 1024 * 1024 {
+        anyhow::bail!("download is larger than 50 MiB");
+    }
+    tokio::fs::write(&path, bytes).await?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+async fn send_file(ctx: Ctx, path: String, caption: String) -> anyhow::Result<()> {
+    let guard = ctx.message.lock().await;
+    let Some(message) = guard.as_ref() else {
+        return Ok(());
+    };
+    let path = safe_data_path(&path)?;
+    let peer_ref = telegram::resolve_message_peer(&ctx.client, message).await?;
+    let uploaded = ctx.client.upload_file(&path).await?;
+    ctx.runtime.wait_for_telegram_send().await;
+    ctx.client
+        .send_message(peer_ref, InputMessage::new().text(caption).file(uploaded))
+        .await?;
+    Ok(())
+}
+
+fn safe_data_path(path: &str) -> anyhow::Result<PathBuf> {
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        anyhow::bail!("path must be relative and must not contain '..'");
+    }
+    Ok(path.to_path_buf())
+}
+
+fn safe_file_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+async fn http_get_text(url: &str) -> anyhow::Result<String> {
+    http_request_text("GET", url, None, Vec::new()).await
+}
+
+fn header_pairs(headers: Option<mlua::Table>) -> mlua::Result<Vec<(String, String)>> {
+    let Some(headers) = headers else {
+        return Ok(Vec::new());
+    };
+    let mut pairs = Vec::new();
+    for pair in headers.pairs::<String, String>() {
+        pairs.push(pair?);
+    }
+    Ok(pairs)
+}
+
+fn field_pairs(fields: Option<mlua::Table>) -> mlua::Result<Vec<(String, String)>> {
+    let Some(fields) = fields else {
+        return Ok(Vec::new());
+    };
+    let mut pairs = Vec::new();
+    for pair in fields.pairs::<String, String>() {
+        pairs.push(pair?);
+    }
+    Ok(pairs)
+}
+
+async fn http_request_text(
+    method: &str,
+    url: &str,
+    body: Option<String>,
+    headers: Vec<(String, String)>,
+) -> anyhow::Result<String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        anyhow::bail!("URL must start with http:// or https://");
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()?;
+    let method = reqwest::Method::from_bytes(method.trim().to_uppercase().as_bytes())?;
+    let mut request = client.request(method, url);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    let bytes = request.send().await?.error_for_status()?.bytes().await?;
+    if bytes.len() > 262_144 {
+        anyhow::bail!("HTTP response is larger than 256 KiB");
+    }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+async fn http_multipart_file_request_text(
+    method: &str,
+    url: &str,
+    file_field: &str,
+    path: &str,
+    fields: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+) -> anyhow::Result<String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        anyhow::bail!("URL must start with http:// or https://");
+    }
+    let path = safe_data_path(path)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("upload.bin")
+        .to_string();
+    let bytes = tokio::fs::read(&path).await?;
+    if bytes.len() > 25 * 1024 * 1024 {
+        anyhow::bail!("multipart upload is larger than 25 MiB");
+    }
+
+    let mut form = reqwest::multipart::Form::new().part(
+        file_field.to_string(),
+        reqwest::multipart::Part::bytes(bytes).file_name(file_name),
+    );
+    for (name, value) in fields {
+        form = form.text(name, value);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .build()?;
+    let method = reqwest::Method::from_bytes(method.trim().to_uppercase().as_bytes())?;
+    let mut request = client.request(method, url).multipart(form);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let bytes = request.send().await?.error_for_status()?.bytes().await?;
+    if bytes.len() > 262_144 {
+        anyhow::bail!("HTTP response is larger than 256 KiB");
+    }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
 async fn sanitize_text(ctx: &Ctx, text: &str) -> String {

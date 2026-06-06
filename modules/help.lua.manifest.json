@@ -1,0 +1,8 @@
+{
+  "name": "help",
+  "version": "1.0.0",
+  "description": "Lists available commands.",
+  "commands": ["help"],
+  "permissions": [],
+  "trusted": true
+}

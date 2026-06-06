@@ -1,0 +1,8 @@
+{
+  "name": "files",
+  "version": "1.0.0",
+  "description": "Download replied media, upload URLs, rename media, and send local files.",
+  "commands": ["dl", "sendfile", "urlupload", "rename"],
+  "permissions": ["network", "telegram.media"],
+  "trusted": true
+}
