@@ -9,99 +9,61 @@ use crate::runtime::RuntimeState;
 
 const TELEGRAM_TEXT_LIMIT: usize = 3900;
 
-/// Sends text safely, splitting long payloads into Telegram-sized chunks.
-pub async fn send_text(
-    client: &Client,
-    runtime: &RuntimeState,
-    peer_ref: PeerRef,
-    text: &str,
-) -> Result<()> {
-    for chunk in split_text(text) {
-        runtime.wait_for_telegram_send().await;
-        client
-            .send_message(peer_ref, formatted_message(chunk))
-            .await?;
-    }
-    Ok(())
+
+pub fn formatted_message_input(markdown: &str) -> InputMessage {
+    let (text, entities) = parse_markdown_message(markdown);
+    InputMessage::default().text(text).fmt_entities(entities)
 }
 
-/// Sends text as a reply, splitting long payloads into Telegram-sized chunks.
-pub async fn reply_text(
-    client: &Client,
-    runtime: &RuntimeState,
-    peer_ref: PeerRef,
-    message_id: i32,
-    text: &str,
-) -> Result<()> {
-    for chunk in split_text(text) {
-        runtime.wait_for_telegram_send().await;
-        client
-            .send_message(
-                peer_ref,
-                formatted_message(chunk).reply_to(Some(message_id)),
-            )
-            .await?;
-    }
-    Ok(())
-}
 
-/// Edits a message and sends overflow chunks as follow-up messages.
-pub async fn edit_or_send_text(
-    client: &Client,
-    runtime: &RuntimeState,
-    peer_ref: PeerRef,
-    message_id: i32,
-    text: &str,
-) -> Result<()> {
+/// Edits a message using grammers' own peer resolution, falling back to respond on failure.
+pub async fn msg_edit_or_respond(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
     let chunks = split_text(text);
     let Some(first_chunk) = chunks.first() else {
         return Ok(());
     };
-
     runtime.wait_for_telegram_send().await;
-    if client
-        .edit_message(peer_ref, message_id, formatted_message(first_chunk.clone()))
+    if msg
+        .edit(formatted_message_input(first_chunk))
         .await
         .is_err()
     {
         runtime.wait_for_telegram_send().await;
-        client
-            .send_message(peer_ref, formatted_message(first_chunk.clone()))
-            .await?;
+        msg.respond(formatted_message_input(first_chunk))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
     }
-
     for chunk in chunks.into_iter().skip(1) {
         runtime.wait_for_telegram_send().await;
-        client
-            .send_message(peer_ref, formatted_message(chunk))
-            .await?;
+        msg.respond(formatted_message_input(&chunk))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
     }
     Ok(())
 }
 
-/// Edits a message without sending a replacement if the edit fails.
-pub async fn edit_text(
-    client: &Client,
-    runtime: &RuntimeState,
-    peer_ref: PeerRef,
-    message_id: i32,
-    text: &str,
-) -> Result<()> {
+/// Edits a message using grammers' own peer resolution, no fallback.
+pub async fn msg_edit_only(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
     let chunks = split_text(text);
     let Some(first_chunk) = chunks.first() else {
         return Ok(());
     };
-
     runtime.wait_for_telegram_send().await;
-    client
-        .edit_message(peer_ref, message_id, formatted_message(first_chunk.clone()))
-        .await?;
+    msg.edit(formatted_message_input(first_chunk))
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
-fn formatted_message(markdown: String) -> InputMessage {
-    let (text, entities) = parse_markdown_message(&markdown);
-    InputMessage::default().text(text).fmt_entities(entities)
+/// Sends a new message to the same chat using grammers' own peer resolution.
+pub async fn msg_respond(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
+    for chunk in split_text(text) {
+        runtime.wait_for_telegram_send().await;
+        msg.respond(formatted_message_input(&chunk))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    Ok(())
 }
 
 /// Deletes messages after passing through the shared Telegram call queue.

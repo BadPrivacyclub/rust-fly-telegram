@@ -194,23 +194,14 @@ impl Loader {
                         module.manifest.name
                     );
                     error!("loader: module '{}' handler '{handler_name}': {e}", module.manifest.name);
-                    if let Ok(peer_ref) = telegram::resolve_message_peer(&client, &msg).await {
-                        let _ = telegram::edit_or_send_text(
-                            &client,
-                            &self.runtime,
-                            peer_ref,
-                            msg.id(),
-                            &err_text,
-                        )
-                        .await;
-                    }
+                    let _ = telegram::msg_edit_or_respond(&self.runtime, &msg, &err_text).await;
                 }
 
                 return Ok(());
             }
         }
 
-        if self.handle_builtin_command(&client, &msg, &cmd).await? {
+        if self.handle_builtin_command(&msg, &cmd).await? {
             return Ok(());
         }
 
@@ -243,12 +234,7 @@ impl Loader {
         modules
     }
 
-    async fn handle_builtin_command(
-        &self,
-        client: &Client,
-        msg: &Message,
-        cmd: &str,
-    ) -> Result<bool> {
+    async fn handle_builtin_command(&self, msg: &Message, cmd: &str) -> Result<bool> {
         let text = match cmd {
             "ping" => Some("pong"),
             "help" => Some(BUILTIN_HELP),
@@ -258,9 +244,7 @@ impl Loader {
             return Ok(false);
         };
 
-        let peer_ref = telegram::resolve_message_peer(client, msg).await?;
-        telegram::edit_or_send_text(client, &self.runtime, peer_ref, msg.id(), text).await?;
-
+        telegram::msg_edit_or_respond(&self.runtime, msg, text).await?;
         Ok(true)
     }
 }

@@ -235,8 +235,7 @@ async fn handle_new_message_events(
         let reason = optional_db_string(&db, "handlers.afk.reason")
             .await
             .unwrap_or_else(|| "I'm busy right now and will reply later.".to_string());
-        let peer_ref = telegram::resolve_message_peer(&client, &msg).await?;
-        telegram::reply_text(&client, &runtime, peer_ref, msg.id(), &reason).await?;
+        telegram::msg_respond(&runtime, &msg, &reason).await?;
     }
 
     Ok(())
@@ -260,7 +259,6 @@ async fn handle_group_captcha(
         if joined.is_empty() {
             return Ok(false);
         }
-        let peer_ref = telegram::resolve_message_peer(client, msg).await?;
         for user_id in joined {
             let code = rand::thread_rng().gen_range(1000..=9999).to_string();
             let key = captcha_key(msg.peer_id().bot_api_dialog_id(), user_id);
@@ -271,7 +269,7 @@ async fn handle_group_captcha(
                 .unwrap_or_else(|| "Welcome. Send this code to pass CAPTCHA: {code}".to_string())
                 .replace("{code}", &code)
                 .replace("{user_id}", &user_id.to_string());
-            telegram::send_text(client, runtime, peer_ref, &text).await?;
+            telegram::msg_respond(runtime, msg, &text).await?;
         }
         return Ok(false);
     }
@@ -288,7 +286,7 @@ async fn handle_group_captcha(
     let peer_ref = telegram::resolve_message_peer(client, msg).await?;
     if msg.text().trim() == code {
         db.remove(&key).await?;
-        telegram::reply_text(client, runtime, peer_ref, msg.id(), "CAPTCHA passed.").await?;
+        telegram::msg_respond(runtime, msg, "CAPTCHA passed.").await?;
     } else {
         telegram::delete_messages(client, runtime, peer_ref, &[msg.id()]).await?;
     }
@@ -344,7 +342,7 @@ fn captcha_key(chat_id: i64, user_id: i64) -> String {
 async fn handle_pm_guard(
     db: &Database,
     runtime: &RuntimeState,
-    client: &grammers_client::Client,
+    _client: &grammers_client::Client,
     msg: &Message,
 ) -> Result<bool> {
     if !db_bool(db, "pmguard.enabled").await {
@@ -365,7 +363,6 @@ async fn handle_pm_guard(
         return Ok(false);
     }
 
-    let peer_ref = telegram::resolve_message_peer(client, msg).await?;
     if csv_contains(
         optional_db_string(db, "pmguard.deny").await.as_deref(),
         &sender,
@@ -375,7 +372,7 @@ async fn handle_pm_guard(
             let text = optional_db_string(db, "pmguard.deny_text")
                 .await
                 .unwrap_or_else(|| "PM blocked by userbot security.".to_string());
-            telegram::reply_text(client, runtime, peer_ref, msg.id(), &text).await?;
+            telegram::msg_respond(runtime, msg, &text).await?;
             db.set(key, serde_json::Value::Bool(true)).await?;
         }
         return Ok(true);
@@ -391,7 +388,7 @@ async fn handle_pm_guard(
         .unwrap_or_else(|| {
             "Hi. PM security is enabled. Please wait until I approve this chat.".to_string()
         });
-    telegram::reply_text(client, runtime, peer_ref, msg.id(), &text).await?;
+    telegram::msg_respond(runtime, msg, &text).await?;
     db.set(key, serde_json::Value::Bool(true)).await?;
     Ok(true)
 }

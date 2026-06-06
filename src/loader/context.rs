@@ -89,12 +89,12 @@ impl UserData for Ctx {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Replies to the current message.
         methods.add_async_method("reply", |_, ctx, text: String| async move {
-            let guard = ctx.message.lock().await;
-            if let Some(msg) = guard.as_ref() {
-                let peer_ref = telegram::resolve_message_peer(&ctx.client, msg)
-                    .await
-                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                telegram::send_text(&ctx.client, &ctx.runtime, peer_ref, &text)
+            let msg = {
+                let guard = ctx.message.lock().await;
+                guard.as_ref().cloned()
+            };
+            if let Some(msg) = msg {
+                telegram::msg_respond(&ctx.runtime, &msg, &text)
                     .await
                     .map_err(|e| mlua::Error::runtime(e.to_string()))?;
             }
@@ -103,12 +103,12 @@ impl UserData for Ctx {
 
         // Edits the current message.
         methods.add_async_method("edit", |_, ctx, text: String| async move {
-            let guard = ctx.message.lock().await;
-            if let Some(msg) = guard.as_ref() {
-                let peer_ref = telegram::resolve_message_peer(&ctx.client, msg)
-                    .await
-                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                telegram::edit_or_send_text(&ctx.client, &ctx.runtime, peer_ref, msg.id(), &text)
+            let msg = {
+                let guard = ctx.message.lock().await;
+                guard.as_ref().cloned()
+            };
+            if let Some(msg) = msg {
+                telegram::msg_edit_or_respond(&ctx.runtime, &msg, &text)
                     .await
                     .map_err(|e| mlua::Error::runtime(e.to_string()))?;
             }
@@ -117,12 +117,13 @@ impl UserData for Ctx {
 
         // Deletes the current message.
         methods.add_async_method("delete", |_, ctx, ()| async move {
-            let guard = ctx.message.lock().await;
-            if let Some(msg) = guard.as_ref() {
-                let peer_ref = telegram::resolve_message_peer(&ctx.client, msg)
-                    .await
-                    .map_err(|e| mlua::Error::runtime(e.to_string()))?;
-                telegram::delete_messages(&ctx.client, &ctx.runtime, peer_ref, &[msg.id()])
+            let msg = {
+                let guard = ctx.message.lock().await;
+                guard.as_ref().cloned()
+            };
+            if let Some(msg) = msg {
+                ctx.runtime.wait_for_telegram_send().await;
+                msg.delete()
                     .await
                     .map_err(|e| mlua::Error::runtime(e.to_string()))?;
             }
@@ -467,17 +468,19 @@ async fn download_url_to_file(url: &str, name: Option<&str>) -> anyhow::Result<S
 }
 
 async fn send_file(ctx: Ctx, path: String, caption: String) -> anyhow::Result<()> {
-    let guard = ctx.message.lock().await;
-    let Some(message) = guard.as_ref() else {
+    let msg = {
+        let guard = ctx.message.lock().await;
+        guard.as_ref().cloned()
+    };
+    let Some(msg) = msg else {
         return Ok(());
     };
     let path = safe_data_path(&path)?;
-    let peer_ref = telegram::resolve_message_peer(&ctx.client, message).await?;
     let uploaded = ctx.client.upload_file(&path).await?;
     ctx.runtime.wait_for_telegram_send().await;
-    ctx.client
-        .send_message(peer_ref, InputMessage::new().text(caption).file(uploaded))
-        .await?;
+    msg.respond(InputMessage::new().text(caption).file(uploaded))
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
@@ -814,23 +817,25 @@ fn preview_text(text: &str) -> String {
 }
 
 async fn edit_current_message(ctx: &Ctx, text: &str) -> anyhow::Result<()> {
-    let guard = ctx.message.lock().await;
-    let Some(msg) = guard.as_ref() else {
+    let msg = {
+        let guard = ctx.message.lock().await;
+        guard.as_ref().cloned()
+    };
+    let Some(msg) = msg else {
         return Ok(());
     };
-    let peer_ref = telegram::resolve_message_peer(&ctx.client, msg).await?;
-    telegram::edit_or_send_text(&ctx.client, &ctx.runtime, peer_ref, msg.id(), text).await?;
-    Ok(())
+    telegram::msg_edit_or_respond(&ctx.runtime, &msg, text).await
 }
 
 async fn edit_current_message_only(ctx: &Ctx, text: &str) -> anyhow::Result<()> {
-    let guard = ctx.message.lock().await;
-    let Some(msg) = guard.as_ref() else {
+    let msg = {
+        let guard = ctx.message.lock().await;
+        guard.as_ref().cloned()
+    };
+    let Some(msg) = msg else {
         return Ok(());
     };
-    let peer_ref = telegram::resolve_message_peer(&ctx.client, msg).await?;
-    telegram::edit_text(&ctx.client, &ctx.runtime, peer_ref, msg.id(), text).await?;
-    Ok(())
+    telegram::msg_edit_only(&ctx.runtime, &msg, text).await
 }
 
 async fn delete_last_own_messages(ctx: Ctx, count: u32) -> anyhow::Result<()> {
