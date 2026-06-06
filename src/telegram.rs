@@ -136,18 +136,14 @@ pub async fn resolve_message_peer(client: &Client, msg: &Message) -> Result<Peer
         return Ok(peer_ref);
     }
 
-    let peer_id = msg.peer_id();
-    if matches!(
-        peer_id.kind(),
-        PeerKind::User | PeerKind::UserSelf | PeerKind::Chat
-    ) {
-        return Ok(PeerRef {
-            id: peer_id,
-            auth: PeerAuth::default(),
-        });
-    }
-
-    anyhow::bail!("peer not in cache")
+    // Fall back to the peer ID without an access hash. For regular users,
+    // chats, and self this is always valid. For channels/supergroups it may
+    // fail at the Telegram API level if the hash is missing, but that gives
+    // a clear API error rather than a silent "peer not in cache" crash.
+    Ok(PeerRef {
+        id: msg.peer_id(),
+        auth: PeerAuth::default(),
+    })
 }
 
 /// Splits text into chunks that are below Telegram's 4096 character limit.

@@ -394,6 +394,54 @@ mod tests {
         names
     }
 
+    fn sandbox_env(lua: &mlua::Lua) -> mlua::Table {
+        let globals = lua.globals();
+        let env = lua.create_table().unwrap();
+        for name in [
+            "assert", "error", "ipairs", "next", "pairs", "pcall", "select", "tonumber",
+            "tostring", "type", "xpcall",
+        ] {
+            env.set(name, globals.get::<mlua::Value>(name).unwrap()).unwrap();
+        }
+        for name in ["coroutine", "math", "string", "table", "utf8"] {
+            env.set(name, globals.get::<mlua::Table>(name).unwrap()).unwrap();
+        }
+        env.set("_G", env.clone()).unwrap();
+        env
+    }
+
+    #[test]
+    fn bundled_modules_load_and_expose_commands_in_sandbox() {
+        let lua = mlua::Lua::new();
+        for path in lua_module_paths() {
+            let manifest = read_manifest(&path);
+            let source = std::fs::read_to_string(&path).expect("module should be readable");
+            let env = sandbox_env(&lua);
+            let table: mlua::Table = lua
+                .load(&source)
+                .set_name(path.to_string_lossy().as_ref())
+                .set_environment(env)
+                .eval()
+                .unwrap_or_else(|e| panic!("sandbox load failed for {path:?}: {e}"));
+
+            let cmds_table: mlua::Table = table
+                .get("commands")
+                .unwrap_or_else(|e| panic!("no commands table in {path:?}: {e}"));
+
+            let actual: Vec<String> = cmds_table
+                .pairs::<String, String>()
+                .map(|p| p.expect("commands entry should be string→string").0)
+                .collect();
+
+            for expected_cmd in &manifest.commands {
+                assert!(
+                    actual.iter().any(|c| c == expected_cmd),
+                    "sandbox-loaded {path:?} is missing command '{expected_cmd}' (got {actual:?})"
+                );
+            }
+        }
+    }
+
     #[test]
     fn bundled_lua_modules_have_valid_syntax() {
         let lua = mlua::Lua::new();

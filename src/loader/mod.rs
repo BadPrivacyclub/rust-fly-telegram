@@ -185,10 +185,26 @@ impl Loader {
                         format!("handler '{handler_name}' not found in module table")
                     })?;
 
-                handler
+                if let Err(e) = handler
                     .call_async::<()>((ctx.clone(), args.clone()))
                     .await
-                    .with_context(|| format!("handler '{handler_name}' returned error"))?;
+                {
+                    let err_text = format!(
+                        "**Error** `{}.{handler_name}`\n\n```text\n{e}\n```",
+                        module.manifest.name
+                    );
+                    error!("loader: module '{}' handler '{handler_name}': {e}", module.manifest.name);
+                    if let Ok(peer_ref) = telegram::resolve_message_peer(&client, &msg).await {
+                        let _ = telegram::edit_or_send_text(
+                            &client,
+                            &self.runtime,
+                            peer_ref,
+                            msg.id(),
+                            &err_text,
+                        )
+                        .await;
+                    }
+                }
 
                 return Ok(());
             }
