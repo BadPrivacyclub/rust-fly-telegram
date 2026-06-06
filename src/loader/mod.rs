@@ -280,39 +280,55 @@ async fn is_own_command_message(client: &Client, msg: &Message) -> bool {
         .is_ok_and(|user| user.id() == sender_id)
 }
 
-const BUILTIN_HELP: &str = r#"fly-telegram
+const BUILTIN_HELP: &str = r#"**✈️ fly-telegram**
 
-Base commands:
-.ping - check command handling
-.help - show this help
-.install <file-or-url> [name] - install a Lua module
-.install as reply - install the replied .lua module
-.note set|get|clear - manage a saved note
-.alias set|get|del - manage text aliases
-.del <count> - delete recent messages
-.info - show chat/user/DC/group activity info
-.sd <seconds> <text> - self-destruct message
-.ytdl <url> - run yt-dlp for a media URL
-.afk on [text]|off - auto-reply when mentioned
-.autoread on|off - mark incoming messages as read
-.antidelete on|off - log deleted cached messages
-.pmguard on|off|status - private message security
-.market search|info|install - module marketplace
-.ip <ip>, .domain <domain>, .rdap <domain> - OSINT lookups
-.dl, .sendfile, .urlupload, .rename - file tools
-.type <text>, .scroll <text>, .magic <text>, .heart [text] - text animations
-.ai provider <name>, .ask, .summarize, .translate, .transcribe - multi-provider AI helper
-.cleanjoins on|off|status, .captcha on|off|status - group protection
-.gifts, .taskbot - dry-run automation hooks
-.play <query>, .queue, .skip, .stop - external music worker controls
-.eval <code> - evaluate Lua code
-.term <command> - run a shell command
+**▸ Core**
+`.ping` — connectivity check
+`.help` — this message
+`.eval <code>` — evaluate Lua expression
+`.term <cmd>` — run a shell command
 
-Module install examples:
-.install C:\path\module.lua
-.install https://example.com/module.lua module_name
+**▸ Messaging**
+`.note set|get|clear` — saved note
+`.alias set|get|del` — text aliases
+`.del <n>` — delete last N messages
+`.sd <sec> <text>` — self-destruct message
 
-Installed modules are saved into modules/ and hot-loaded by the watcher."#;
+**▸ Modules**
+`.install <path-or-url> [name]` — install from file or URL
+`.install` _(reply to .lua)_ — install replied module
+`.market search|info|install` — module marketplace
+
+**▸ Info & OSINT**
+`.info` — chat / user / DC / group info
+`.ip <ip>` · `.domain <d>` · `.rdap <d>` — OSINT lookups
+`.ytdl <url>` — run yt-dlp
+
+**▸ Files**
+`.dl` · `.sendfile` · `.urlupload` · `.rename`
+
+**▸ AI**
+`.ai provider <name>` — set active AI provider
+`.ask` · `.summarize` · `.translate` · `.transcribe`
+
+**▸ Automation**
+`.afk on [text]|off` — away mode with auto-reply
+`.autoread on|off` — mark incoming messages as read
+`.antidelete on|off` — log deleted cached messages
+`.pmguard on|off|status` — private message guard
+
+**▸ Groups**
+`.cleanjoins on|off|status` — remove join messages
+`.captcha on|off|status` — join captcha
+
+**▸ Music** _(external worker)_
+`.play <query>` · `.queue` · `.skip` · `.stop`
+
+**▸ Fun**
+`.type` · `.scroll` · `.magic` · `.heart [text]` — text animations
+`.gifts` · `.taskbot` — dry-run hooks
+
+_Modules are saved to_ `modules/` _and hot-reloaded on save._"#;
 
 /// Reads `module.commands = { cmd = "handler_fn" }` from a module table.
 fn collect_commands(table: &Table) -> Result<HashMap<String, String>> {
