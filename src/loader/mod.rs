@@ -67,7 +67,12 @@ impl Loader {
 
     /// Loads all `.lua` files from the module directory.
     pub async fn load_all(&self) -> Result<()> {
+        let abs = self.modules_dir.canonicalize().unwrap_or_else(|_| self.modules_dir.clone());
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("?"));
+        info!("loading modules from {abs:?} (cwd: {cwd:?})");
+
         if !self.modules_dir.exists() {
+            warn!("modules directory {abs:?} does not exist, creating it");
             tokio::fs::create_dir_all(&self.modules_dir).await?;
             return Ok(());
         }
@@ -82,6 +87,8 @@ impl Loader {
             }
         }
 
+        let count = self.modules.read().await.len();
+        info!("loaded {count} module(s)");
         Ok(())
     }
 
@@ -235,16 +242,25 @@ impl Loader {
     }
 
     async fn handle_builtin_command(&self, msg: &Message, cmd: &str) -> Result<bool> {
-        let text = match cmd {
-            "ping" => Some("pong"),
-            "help" => Some(BUILTIN_HELP),
+        let text: Option<String> = match cmd {
+            "ping" => {
+                let count = self.modules.read().await.len();
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "?".to_string());
+                Some(format!(
+                    "pong · **{count}** module(s) loaded  \nModules dir: `{}`  \nCWD: `{cwd}`",
+                    self.modules_dir.display()
+                ))
+            }
+            "help" => Some(BUILTIN_HELP.to_string()),
             _ => None,
         };
         let Some(text) = text else {
             return Ok(false);
         };
 
-        telegram::msg_edit_or_respond(&self.runtime, msg, text).await?;
+        telegram::msg_edit_or_respond(&self.runtime, msg, &text).await?;
         Ok(true)
     }
 }
