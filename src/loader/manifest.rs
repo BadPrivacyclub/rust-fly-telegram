@@ -567,4 +567,184 @@ mod tests {
             "different source should fail"
         );
     }
+
+    /// Mock ctx table with every method the Lua modules may call.
+    /// Methods that do real I/O are replaced with no-ops or return minimal valid data.
+    fn make_mock_ctx(lua: &mlua::Lua) -> mlua::Table {
+        lua.load(
+            r#"
+            local ctx = {}
+            ctx._edits = {}
+            function ctx:edit(text)      table.insert(self._edits, tostring(text or "")) end
+            function ctx:reply(text)     end
+            function ctx:delete()        end
+            function ctx:sleep_ms(ms)    end
+            function ctx:sleep(s)        end
+            function ctx:db_get(key)     return nil end
+            function ctx:db_set(k, v)    end
+            function ctx:sanitize(t)     return tostring(t or "") end
+            function ctx:message_text()  return "" end
+            function ctx:replied_text()  return "" end
+            function ctx:message_info()  return "Chat ID: 0\nMessage ID: 0" end
+            function ctx:module_info()   return {name="test", permissions={}, trusted=true} end
+            function ctx:runtime_stats() return {uptime_seconds=0, cpu_percent=0.0} end
+            function ctx:now_ms()        return 0 end
+            function ctx:uptime_seconds() return 0 end
+            function ctx:delete_last_own(n) end
+            function ctx:update_project()   end
+            function ctx:install_module(src, name) return "ok" end
+            function ctx:install_replied_module(name) error("no reply") end
+            function ctx:install_plugin(src, name)  return "ok" end
+            function ctx:install_replied_plugin(name) error("no reply") end
+            function ctx:env_get(key)    return nil end
+            function ctx:download_replied_media(name) return "data/test.bin" end
+            function ctx:download_url(url, name) return "data/test.bin" end
+            function ctx:send_file(path, caption) end
+            function ctx:run_term(cmd) end
+            -- HTTP stubs returning empty but parseable data
+            function ctx:http_get(url)   return "" end
+            function ctx:http_json_get(url) return {} end
+            function ctx:http_request(method, url, body, headers) return "" end
+            function ctx:http_json_request(method, url, body, headers) return {} end
+            function ctx:http_json_multipart_file_request(method, url, field, path, fields, headers) return {} end
+            return ctx
+            "#,
+        )
+        .eval()
+        .expect("mock ctx should evaluate")
+    }
+
+    #[tokio::test]
+    async fn module_command_handlers_run_with_mock_ctx() {
+        let lua = mlua::Lua::new();
+
+        // Neutralise os.exit so updater/restart handlers don't kill the test runner.
+        let os: mlua::Table = lua.globals().get("os").unwrap();
+        os.set(
+            "exit",
+            lua.create_function(|_, _: mlua::Value| Ok(()))
+                .unwrap(),
+        )
+        .unwrap();
+
+        // Commands that spawn real side-effects we cannot safely mock in-process.
+        let skip: std::collections::HashSet<&str> =
+            ["term", "restart"].iter().copied().collect();
+
+        // Per-command test arguments; commands not listed get ["", "test"].
+        let args_map: std::collections::HashMap<&str, Vec<&str>> = [
+            ("type",       vec!["", "hello", "привет мир"]),
+            ("scroll",     vec!["", "hello"]),
+            ("magic",      vec!["", "test"]),
+            ("heart",      vec!["", "love u"]),
+            ("ping",       vec![""]),
+            ("eval",       vec!["", "1 + 1", "return 42"]),
+            ("note",       vec!["", "get", "set some note", "clear"]),
+            ("alias",      vec!["", "get x", "set x hello", "del x"]),
+            ("del",        vec!["", "3"]),
+            ("info",       vec![""]),
+            ("sd",         vec!["", "5 test"]),
+            ("afk",        vec!["", "on away", "off"]),
+            ("autoread",   vec!["", "on", "off"]),
+            ("antidelete", vec!["", "on", "off"]),
+            ("cleanjoins", vec!["", "on", "off", "status"]),
+            ("captcha",    vec!["", "on", "off", "status"]),
+            ("group",      vec!["", "status"]),
+            ("pmguard",    vec!["", "on", "off", "status"]),
+            ("ip",         vec!["", "1.1.1.1"]),
+            ("domain",     vec!["", "example.com"]),
+            ("rdap",       vec!["", "example.com"]),
+            ("ai",         vec!["provider openai"]),
+            ("ask",        vec!["", "hi"]),
+            ("summarize",  vec![""]),
+            ("translate",  vec!["en hi"]),
+            ("transcribe", vec![""]),
+            ("play",       vec!["test"]),
+            ("queue",      vec![""]),
+            ("skip",       vec![""]),
+            ("stop",       vec![""]),
+            ("market",     vec!["", "search"]),
+            ("install",    vec!["http://example.com/test.lua"]),
+            ("update",     vec![""]),
+            ("gifts",      vec![""]),
+            ("taskbot",    vec![""]),
+            ("dl",         vec![""]),
+            ("sendfile",   vec!["data/test.txt caption"]),
+            ("urlupload",  vec!["http://example.com/file.txt"]),
+            ("rename",     vec!["old.txt new.txt"]),
+            ("ytdl",       vec!["", "http://example.com/video"]),
+            ("help",       vec![""]),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut errors: Vec<String> = Vec::new();
+
+        for path in lua_module_paths() {
+            let module_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {path:?}: {e}"));
+
+            let module: mlua::Table = lua
+                .load(&source)
+                .set_name(&module_name)
+                .eval()
+                .unwrap_or_else(|e| panic!("module '{module_name}' load error: {e}"));
+
+            let Ok(commands) = module.get::<mlua::Table>("commands") else {
+                continue;
+            };
+
+            let pairs: Vec<(String, String)> = commands
+                .pairs::<String, String>()
+                .map(|p| p.expect("commands table must be string→string"))
+                .collect();
+
+            for (cmd, handler_name) in pairs {
+                if skip.contains(cmd.as_str()) {
+                    continue;
+                }
+
+                let handler: mlua::Function =
+                    match module.get::<mlua::Function>(handler_name.as_str()) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            errors.push(format!(
+                                "LOAD  {module_name}.{handler_name}: {e}"
+                            ));
+                            continue;
+                        }
+                    };
+
+                let test_args = args_map
+                    .get(cmd.as_str())
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&["", "test"]);
+
+                for &args in test_args {
+                    let ctx = make_mock_ctx(&lua);
+                    if let Err(e) = handler
+                        .call_async::<()>((ctx, args.to_string()))
+                        .await
+                    {
+                        errors.push(format!(
+                            "ERROR {module_name}.{cmd}({args:?}): {e}"
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            panic!(
+                "{} handler error(s):\n{}",
+                errors.len(),
+                errors.join("\n")
+            );
+        }
+    }
 }
