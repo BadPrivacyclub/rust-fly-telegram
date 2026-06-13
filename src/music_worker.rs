@@ -232,7 +232,7 @@ async fn resolve_source(source: &str) -> Result<String> {
     let output = tokio::time::timeout(
         Duration::from_secs(45),
         Command::new("yt-dlp")
-            .args(["-f", "bestaudio/best", "--no-playlist", "-g", &query])
+            .args(["-f", "bestaudio/best", "--no-playlist", "-g", "--", &query])
             .output(),
     )
     .await??;
