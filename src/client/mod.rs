@@ -5,7 +5,7 @@ use grammers_client::tl;
 use grammers_client::update::{Message, MessageDeletion, Update};
 use grammers_session::types::PeerKind;
 use rand::Rng;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use tracing::{error, info};
 
 pub mod auth;
@@ -106,7 +106,13 @@ async fn run_connection(
         pool: _pool,
         session_file,
     } = connection;
-    let account = anti_delete::account_snapshot(&client, &session_file).await;
+    let (account, own_user_id) = anti_delete::account_snapshot(&client, &session_file).await;
+    let cached_own_user_id = Arc::new(OnceCell::new());
+    if let Some(own_user_id) = own_user_id {
+        cached_own_user_id
+            .set(own_user_id)
+            .expect("own user cache is initialized only once");
+    }
     runtime
         .set_account_connected(
             session_file.clone(),
@@ -139,6 +145,7 @@ async fn run_connection(
                     Arc::clone(&loader),
                     Arc::clone(&runtime),
                     session_file.clone(),
+                    Arc::clone(&cached_own_user_id),
                     client.clone(),
                     msg,
                 );
@@ -150,6 +157,7 @@ async fn run_connection(
                     Arc::clone(&loader),
                     Arc::clone(&runtime),
                     session_file.clone(),
+                    Arc::clone(&cached_own_user_id),
                     client.clone(),
                     msg,
                 );
@@ -173,6 +181,7 @@ fn spawn_message_handlers(
     loader: Arc<Loader>,
     runtime: Arc<RuntimeState>,
     session_file: String,
+    own_user_id: Arc<OnceCell<grammers_session::types::PeerId>>,
     client: grammers_client::Client,
     msg: Message,
 ) {
@@ -199,7 +208,7 @@ fn spawn_message_handlers(
     });
 
     tokio::spawn(async move {
-        if let Err(e) = loader.handle_message(client, msg).await {
+        if let Err(e) = loader.handle_message(client, msg, own_user_id).await {
             error!("loader error: {e}");
         }
     });
@@ -356,17 +365,11 @@ async fn handle_pm_guard(
         return Ok(false);
     };
     let sender = sender_id.bot_api_dialog_id().to_string();
-    if csv_contains(
-        optional_db_string(db, "pmguard.allow").await.as_deref(),
-        &sender,
-    ) {
+    if db.csv_contains("pmguard.allow", &sender).await {
         return Ok(false);
     }
 
-    if csv_contains(
-        optional_db_string(db, "pmguard.deny").await.as_deref(),
-        &sender,
-    ) {
+    if db.csv_contains("pmguard.deny", &sender).await {
         let key = format!("pmguard.denied_seen.{sender}");
         if !db_bool(db, &key).await {
             let text = optional_db_string(db, "pmguard.deny_text")
@@ -471,12 +474,4 @@ async fn optional_db_string(db: &Database, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn csv_contains(values: Option<&str>, needle: &str) -> bool {
-    values
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim)
-        .any(|value| value == needle)
 }

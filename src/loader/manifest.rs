@@ -245,10 +245,12 @@ pub fn required_modules(source: &str) -> Vec<String> {
     for line in source.lines() {
         let line = line.trim();
         for quote in ['"', '\''] {
-            let Some(start) = line
-                .find(&format!("require({quote}"))
-                .or_else(|| line.find(&format!("require {quote}")))
-            else {
+            let (parenthesized, spaced) = match quote {
+                '"' => ("require(\"", "require \""),
+                '\'' => ("require('", "require '"),
+                _ => unreachable!(),
+            };
+            let Some(start) = line.find(parenthesized).or_else(|| line.find(spaced)) else {
                 continue;
             };
             let after = &line[start..];
@@ -344,9 +346,75 @@ fn push_capability(capabilities: &mut Vec<String>, condition: bool, name: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hint::black_box;
+    use std::time::Instant;
 
     fn modules_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("modules")
+    }
+
+    #[test]
+    fn required_modules_supports_both_quotes_and_call_styles() {
+        let source = r#"
+            local alpha = require("alpha.core")
+            local beta = require 'beta.util'
+            local duplicate = require "alpha.core"
+        "#;
+
+        assert_eq!(required_modules(source), ["alpha/core", "beta/util"]);
+    }
+
+    #[test]
+    #[ignore = "manual performance benchmark"]
+    fn benchmark_required_modules_without_temporary_patterns() {
+        let source = (0..10_000)
+            .map(|value| format!("local value_{value} = {value}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let legacy_started = Instant::now();
+        for _ in 0..100 {
+            black_box(legacy_required_modules(&source));
+        }
+        let legacy_elapsed = legacy_started.elapsed();
+
+        let optimized_started = Instant::now();
+        for _ in 0..100 {
+            black_box(required_modules(&source));
+        }
+        let optimized_elapsed = optimized_started.elapsed();
+
+        eprintln!(
+            "required_modules 100 iterations: legacy={legacy_elapsed:?}, static={optimized_elapsed:?}"
+        );
+    }
+
+    fn legacy_required_modules(source: &str) -> Vec<String> {
+        let mut modules = Vec::new();
+        for line in source.lines() {
+            let line = line.trim();
+            for quote in ['"', '\''] {
+                let Some(start) = line
+                    .find(&format!("require({quote}"))
+                    .or_else(|| line.find(&format!("require {quote}")))
+                else {
+                    continue;
+                };
+                let after = &line[start..];
+                let Some(first_quote) = after.find(quote) else {
+                    continue;
+                };
+                let rest = &after[first_quote + 1..];
+                let Some(end_quote) = rest.find(quote) else {
+                    continue;
+                };
+                let module = rest[..end_quote].replace('.', "/");
+                if !module.is_empty() && !modules.contains(&module) {
+                    modules.push(module);
+                }
+            }
+        }
+        modules
     }
 
     fn lua_module_paths() -> Vec<PathBuf> {
@@ -401,10 +469,12 @@ mod tests {
             "assert", "error", "ipairs", "next", "pairs", "pcall", "select", "tonumber",
             "tostring", "type", "xpcall",
         ] {
-            env.set(name, globals.get::<mlua::Value>(name).unwrap()).unwrap();
+            env.set(name, globals.get::<mlua::Value>(name).unwrap())
+                .unwrap();
         }
         for name in ["coroutine", "math", "string", "table", "utf8"] {
-            env.set(name, globals.get::<mlua::Table>(name).unwrap()).unwrap();
+            env.set(name, globals.get::<mlua::Table>(name).unwrap())
+                .unwrap();
         }
         env.set("_G", env.clone()).unwrap();
         env
@@ -554,11 +624,17 @@ mod tests {
         let sig = sk.sign(&payload).to_bytes();
         manifest.signature = Some(STANDARD.encode(sig));
 
-        assert!(verify_trusted(&manifest, source, &vk), "valid sig should verify");
+        assert!(
+            verify_trusted(&manifest, source, &vk),
+            "valid sig should verify"
+        );
 
         // Tampered permissions invalidate the signature.
         manifest.permissions.push("network".to_string());
-        assert!(!verify_trusted(&manifest, source, &vk), "bad perms should fail");
+        assert!(
+            !verify_trusted(&manifest, source, &vk),
+            "bad perms should fail"
+        );
 
         // Restore permissions but change source.
         manifest.permissions.pop();
@@ -622,58 +698,56 @@ mod tests {
         let os: mlua::Table = lua.globals().get("os").unwrap();
         os.set(
             "exit",
-            lua.create_function(|_, _: mlua::Value| Ok(()))
-                .unwrap(),
+            lua.create_function(|_, _: mlua::Value| Ok(())).unwrap(),
         )
         .unwrap();
 
         // Commands that spawn real side-effects we cannot safely mock in-process.
-        let skip: std::collections::HashSet<&str> =
-            ["term", "restart"].iter().copied().collect();
+        let skip: std::collections::HashSet<&str> = ["term", "restart"].iter().copied().collect();
 
         // Per-command test arguments; commands not listed get ["", "test"].
         let args_map: std::collections::HashMap<&str, Vec<&str>> = [
-            ("type",       vec!["", "hello", "привет мир"]),
-            ("scroll",     vec!["", "hello"]),
-            ("magic",      vec!["", "test"]),
-            ("heart",      vec!["", "love u"]),
-            ("ping",       vec![""]),
-            ("eval",       vec!["", "1 + 1", "return 42"]),
-            ("note",       vec!["", "get", "set some note", "clear"]),
-            ("alias",      vec!["", "get x", "set x hello", "del x"]),
-            ("del",        vec!["", "3"]),
-            ("info",       vec![""]),
-            ("sd",         vec!["", "5 test"]),
-            ("afk",        vec!["", "on away", "off"]),
-            ("autoread",   vec!["", "on", "off"]),
+            ("type", vec!["", "hello", "привет мир"]),
+            ("scroll", vec!["", "hello"]),
+            ("magic", vec!["", "test"]),
+            ("heart", vec!["", "love u"]),
+            ("ping", vec![""]),
+            ("eval", vec!["", "1 + 1", "return 42"]),
+            ("note", vec!["", "get", "set some note", "clear"]),
+            ("alias", vec!["", "get x", "set x hello", "del x"]),
+            ("del", vec!["", "3"]),
+            ("info", vec![""]),
+            ("sd", vec!["", "5 test"]),
+            ("afk", vec!["", "on away", "off"]),
+            ("autoread", vec!["", "on", "off"]),
             ("antidelete", vec!["", "on", "off"]),
             ("cleanjoins", vec!["", "on", "off", "status"]),
-            ("captcha",    vec!["", "on", "off", "status"]),
-            ("group",      vec!["", "status"]),
-            ("pmguard",    vec!["", "on", "off", "status"]),
-            ("ip",         vec!["", "1.1.1.1"]),
-            ("domain",     vec!["", "example.com"]),
-            ("rdap",       vec!["", "example.com"]),
-            ("ai",         vec!["provider openai"]),
-            ("ask",        vec!["", "hi"]),
-            ("summarize",  vec![""]),
-            ("translate",  vec!["en hi"]),
+            ("captcha", vec!["", "on", "off", "status"]),
+            ("group", vec!["", "status"]),
+            ("pmguard", vec!["", "on", "off", "status"]),
+            ("ip", vec!["", "1.1.1.1"]),
+            ("domain", vec!["", "example.com"]),
+            ("rdap", vec!["", "example.com"]),
+            ("ai", vec!["provider openai"]),
+            ("ask", vec!["", "hi"]),
+            ("summarize", vec![""]),
+            ("translate", vec!["en hi"]),
             ("transcribe", vec![""]),
-            ("play",       vec!["test"]),
-            ("queue",      vec![""]),
-            ("skip",       vec![""]),
-            ("stop",       vec![""]),
-            ("market",     vec!["", "search"]),
-            ("install",    vec!["http://example.com/test.lua"]),
-            ("update",     vec![""]),
-            ("gifts",      vec![""]),
-            ("taskbot",    vec![""]),
-            ("dl",         vec![""]),
-            ("sendfile",   vec!["data/test.txt caption"]),
-            ("urlupload",  vec!["http://example.com/file.txt"]),
-            ("rename",     vec!["old.txt new.txt"]),
-            ("ytdl",       vec!["", "http://example.com/video"]),
-            ("help",       vec![""]),
+            ("play", vec!["test"]),
+            ("queue", vec![""]),
+            ("skip", vec![""]),
+            ("stop", vec![""]),
+            ("market", vec!["", "search"]),
+            ("install", vec!["http://example.com/test.lua"]),
+            ("update", vec![""]),
+            ("gifts", vec![""]),
+            ("taskbot", vec![""]),
+            ("dl", vec![""]),
+            ("sendfile", vec!["data/test.txt caption"]),
+            ("urlupload", vec!["http://example.com/file.txt"]),
+            ("rename", vec!["old.txt new.txt"]),
+            ("ytdl", vec!["", "http://example.com/video"]),
+            ("help", vec![""]),
         ]
         .into_iter()
         .collect();
@@ -713,9 +787,7 @@ mod tests {
                     match module.get::<mlua::Function>(handler_name.as_str()) {
                         Ok(f) => f,
                         Err(e) => {
-                            errors.push(format!(
-                                "LOAD  {module_name}.{handler_name}: {e}"
-                            ));
+                            errors.push(format!("LOAD  {module_name}.{handler_name}: {e}"));
                             continue;
                         }
                     };
@@ -727,24 +799,15 @@ mod tests {
 
                 for &args in test_args {
                     let ctx = make_mock_ctx(&lua);
-                    if let Err(e) = handler
-                        .call_async::<()>((ctx, args.to_string()))
-                        .await
-                    {
-                        errors.push(format!(
-                            "ERROR {module_name}.{cmd}({args:?}): {e}"
-                        ));
+                    if let Err(e) = handler.call_async::<()>((ctx, args.to_string())).await {
+                        errors.push(format!("ERROR {module_name}.{cmd}({args:?}): {e}"));
                     }
                 }
             }
         }
 
         if !errors.is_empty() {
-            panic!(
-                "{} handler error(s):\n{}",
-                errors.len(),
-                errors.join("\n")
-            );
+            panic!("{} handler error(s):\n{}", errors.len(), errors.join("\n"));
         }
     }
 }

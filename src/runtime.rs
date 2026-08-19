@@ -253,3 +253,19 @@ fn linux_clock_ticks() -> f64 {
 fn process_cpu_time() -> Option<Duration> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeState;
+
+    #[test]
+    fn record_update_increments_updates_seen() {
+        let runtime = RuntimeState::default();
+        assert_eq!(runtime.updates_seen(), 0);
+
+        runtime.record_update();
+        runtime.record_update();
+
+        assert_eq!(runtime.updates_seen(), 2);
+    }
+}

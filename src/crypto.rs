@@ -103,10 +103,8 @@ pub fn save_keypair(
         std::fs::create_dir_all(parent).context("creating keys directory")?;
     }
     let encrypted = encrypt_with_password(&sk.to_bytes(), password)?;
-    std::fs::write(enc_path, &encrypted)
-        .with_context(|| format!("writing {enc_path:?}"))?;
-    std::fs::write(pub_path, vk.to_bytes())
-        .with_context(|| format!("writing {pub_path:?}"))?;
+    std::fs::write(enc_path, &encrypted).with_context(|| format!("writing {enc_path:?}"))?;
+    std::fs::write(pub_path, vk.to_bytes()).with_context(|| format!("writing {pub_path:?}"))?;
     Ok(())
 }
 
@@ -151,4 +149,65 @@ pub fn decrypt_with_password(encrypted: &[u8], password: &str) -> Result<Vec<u8>
     key.cipher()
         .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
         .map_err(|_| anyhow::anyhow!("invalid master password or corrupted file"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        env::temp_dir().join(format!("fly_telegram_{label}_{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn load_signing_key_decrypts_saved_key() {
+        let path = temp_path("signing_key.enc");
+        let (expected, _) = generate_keypair();
+        let encrypted = encrypt_with_password(&expected.to_bytes(), "correct horse")
+            .expect("key should encrypt");
+        std::fs::write(&path, encrypted).expect("encrypted key fixture should be written");
+
+        let actual =
+            load_signing_key(&path, "correct horse").expect("encrypted signing key should load");
+
+        assert_eq!(actual.to_bytes(), expected.to_bytes());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_signing_key_rejects_wrong_password() {
+        let path = temp_path("wrong_password.enc");
+        let (key, _) = generate_keypair();
+        let encrypted =
+            encrypt_with_password(&key.to_bytes(), "right").expect("key should encrypt");
+        std::fs::write(&path, encrypted).expect("encrypted key fixture should be written");
+
+        let error = load_signing_key(&path, "wrong").expect_err("wrong password should fail");
+
+        assert!(error.to_string().contains("invalid master password"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_signing_key_rejects_invalid_key_length() {
+        let path = temp_path("short_key.enc");
+        let encrypted =
+            encrypt_with_password(&[7_u8; 31], "password").expect("short fixture should encrypt");
+        std::fs::write(&path, encrypted).expect("encrypted key fixture should be written");
+
+        let error = load_signing_key(&path, "password").expect_err("short key should fail");
+
+        assert!(error.to_string().contains("exactly 32 bytes"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_signing_key_reports_missing_file() {
+        let path = temp_path("missing_key.enc");
+
+        let error = load_signing_key(&path, "password").expect_err("missing key should fail");
+
+        assert!(error.to_string().contains("reading"));
+    }
 }

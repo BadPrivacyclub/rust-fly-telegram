@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ pub struct Database {
     path: PathBuf,
     master_password: Arc<RwLock<Option<String>>>,
     data: RwLock<Map<String, Value>>,
+    csv_values: RwLock<HashMap<String, HashSet<String>>>,
 }
 
 impl Database {
@@ -59,10 +61,12 @@ impl Database {
         };
         drop(password_guard);
 
+        let csv_values = build_csv_cache(&data);
         Ok(Self {
             path,
             master_password,
             data: RwLock::new(data),
+            csv_values: RwLock::new(csv_values),
         })
     }
 
@@ -78,14 +82,34 @@ impl Database {
 
     /// Sets `key` to `value` and flushes to disk.
     pub async fn set(&self, key: impl Into<String>, value: Value) -> Result<()> {
-        self.data.write().await.insert(key.into(), value);
+        let key = key.into();
+        let mut data = self.data.write().await;
+        let mut csv_values = self.csv_values.write().await;
+        update_csv_cache(&mut csv_values, &key, &value);
+        data.insert(key, value);
+        drop(csv_values);
+        drop(data);
         self.flush().await
+    }
+
+    /// Checks a comma-separated string setting using the cache built on load/update.
+    pub async fn csv_contains(&self, key: &str, needle: &str) -> bool {
+        self.csv_values
+            .read()
+            .await
+            .get(key)
+            .is_some_and(|values| values.contains(needle))
     }
 
     /// Removes `key` and flushes to disk.
     #[allow(dead_code)]
     pub async fn remove(&self, key: &str) -> Result<()> {
-        self.data.write().await.remove(key);
+        let mut data = self.data.write().await;
+        let mut csv_values = self.csv_values.write().await;
+        data.remove(key);
+        csv_values.remove(key);
+        drop(csv_values);
+        drop(data);
         self.flush().await
     }
 
@@ -142,10 +166,46 @@ fn encrypted_path(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn build_csv_cache(data: &Map<String, Value>) -> HashMap<String, HashSet<String>> {
+    data.iter()
+        .filter(|(key, _)| is_cached_csv_key(key))
+        .filter_map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), parse_csv_values(value)))
+        })
+        .collect()
+}
+
+fn update_csv_cache(cache: &mut HashMap<String, HashSet<String>>, key: &str, value: &Value) {
+    if !is_cached_csv_key(key) {
+        return;
+    }
+    if let Some(value) = value.as_str() {
+        cache.insert(key.to_string(), parse_csv_values(value));
+    } else {
+        cache.remove(key);
+    }
+}
+
+fn is_cached_csv_key(key: &str) -> bool {
+    matches!(key, "pmguard.allow" | "pmguard.deny")
+}
+
+fn parse_csv_values(value: &str) -> HashSet<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+    use std::hint::black_box;
+    use std::time::Instant;
 
     async fn temp_db() -> (Database, PathBuf) {
         let path = env::temp_dir().join(format!("fly_telegram_test_{}.json", uuid::Uuid::new_v4()));
@@ -170,6 +230,67 @@ mod tests {
         let (db, path) = temp_db().await;
         assert_eq!(db.get("nope").await, Value::Null);
         let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn csv_cache_tracks_loaded_and_updated_values() {
+        let path = env::temp_dir().join(format!(
+            "fly_telegram_csv_test_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::write(&path, r#"{"pmguard.allow":"1, 2,3"}"#)
+            .await
+            .expect("CSV fixture should be written");
+        let db = Database::load(&path)
+            .await
+            .expect("CSV fixture should load");
+
+        assert!(db.csv_contains("pmguard.allow", "2").await);
+        assert!(!db.csv_contains("pmguard.allow", "4").await);
+
+        db.set("pmguard.allow", Value::String("4, 5".into()))
+            .await
+            .expect("CSV update should persist");
+        assert!(!db.csv_contains("pmguard.allow", "2").await);
+        assert!(db.csv_contains("pmguard.allow", "5").await);
+
+        db.remove("pmguard.allow")
+            .await
+            .expect("CSV removal should persist");
+        assert!(!db.csv_contains("pmguard.allow", "5").await);
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    #[test]
+    #[ignore = "manual performance benchmark"]
+    fn benchmark_csv_membership() {
+        let source = (0..1_000)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let cached = parse_csv_values(&source);
+        let needle = "999";
+
+        let split_started = Instant::now();
+        for _ in 0..100_000 {
+            black_box(
+                source
+                    .split(',')
+                    .map(str::trim)
+                    .any(|value| value == needle),
+            );
+        }
+        let split_elapsed = split_started.elapsed();
+
+        let cached_started = Instant::now();
+        for _ in 0..100_000 {
+            black_box(cached.contains(needle));
+        }
+        let cached_elapsed = cached_started.elapsed();
+
+        eprintln!(
+            "CSV membership 100k iterations: split={split_elapsed:?}, cached={cached_elapsed:?}"
+        );
     }
 
     #[tokio::test]

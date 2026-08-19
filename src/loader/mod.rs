@@ -7,7 +7,7 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 use grammers_session::types::PeerKind;
 use mlua::{Function, Lua, Table};
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 use tracing::{error, info, warn};
 
 pub mod context;
@@ -48,13 +48,11 @@ impl Loader {
         runtime: Arc<RuntimeState>,
         modules_dir: impl AsRef<Path>,
     ) -> Result<Self> {
-        let verifying_key =
-            crypto::load_verifying_key(Path::new(config::SIGNING_PUB_KEY_FILE)).unwrap_or_else(
-                |e| {
-                    warn!("could not load signing public key: {e}");
-                    None
-                },
-            );
+        let verifying_key = crypto::load_verifying_key(Path::new(config::SIGNING_PUB_KEY_FILE))
+            .unwrap_or_else(|e| {
+                warn!("could not load signing public key: {e}");
+                None
+            });
         Ok(Self {
             lua: Arc::new(Lua::new()),
             db,
@@ -67,7 +65,10 @@ impl Loader {
 
     /// Loads all `.lua` files from the module directory.
     pub async fn load_all(&self) -> Result<()> {
-        let abs = self.modules_dir.canonicalize().unwrap_or_else(|_| self.modules_dir.clone());
+        let abs = self
+            .modules_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.modules_dir.clone());
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("?"));
         info!("loading modules from {abs:?} (cwd: {cwd:?})");
 
@@ -157,8 +158,13 @@ impl Loader {
     }
 
     /// Dispatches an incoming message to the matching command handler.
-    pub async fn handle_message(&self, client: Client, msg: Message) -> Result<()> {
-        if !is_own_command_message(&client, &msg).await {
+    pub async fn handle_message(
+        &self,
+        client: Client,
+        msg: Message,
+        own_user_id: Arc<OnceCell<grammers_session::types::PeerId>>,
+    ) -> Result<()> {
+        if !is_own_command_message(&client, &msg, &own_user_id).await {
             return Ok(());
         }
 
@@ -192,15 +198,15 @@ impl Loader {
                         format!("handler '{handler_name}' not found in module table")
                     })?;
 
-                if let Err(e) = handler
-                    .call_async::<()>((ctx.clone(), args.clone()))
-                    .await
-                {
+                if let Err(e) = handler.call_async::<()>((ctx.clone(), args.clone())).await {
                     let err_text = format!(
                         "**Error** `{}.{handler_name}`\n\n```text\n{e}\n```",
                         module.manifest.name
                     );
-                    error!("loader: module '{}' handler '{handler_name}': {e}", module.manifest.name);
+                    error!(
+                        "loader: module '{}' handler '{handler_name}': {e}",
+                        module.manifest.name
+                    );
                     let _ = telegram::msg_edit_or_respond(&self.runtime, &msg, &err_text).await;
                 }
 
@@ -281,7 +287,11 @@ fn sandbox_environment(lua: &Lua) -> Result<Table> {
     Ok(env)
 }
 
-async fn is_own_command_message(client: &Client, msg: &Message) -> bool {
+async fn is_own_command_message(
+    client: &Client,
+    msg: &Message,
+    own_user_id: &OnceCell<grammers_session::types::PeerId>,
+) -> bool {
     if msg.outgoing() || matches!(msg.peer_id().kind(), PeerKind::UserSelf) {
         return true;
     }
@@ -290,10 +300,10 @@ async fn is_own_command_message(client: &Client, msg: &Message) -> bool {
         return false;
     };
 
-    client
-        .get_me()
+    own_user_id
+        .get_or_try_init(|| async { client.get_me().await.map(|user| user.id()) })
         .await
-        .is_ok_and(|user| user.id() == sender_id)
+        .is_ok_and(|own_user_id| *own_user_id == sender_id)
 }
 
 const BUILTIN_HELP: &str = r#"**✈️ fly-telegram**
