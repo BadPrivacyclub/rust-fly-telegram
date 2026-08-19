@@ -9,14 +9,17 @@ use crate::runtime::RuntimeState;
 
 const TELEGRAM_TEXT_LIMIT: usize = 3900;
 
-
 pub fn formatted_message_input(markdown: &str) -> InputMessage {
-    let (text, entities) = parse_markdown_message(markdown);
+    let (text, entities) = formatted_message_parts(markdown);
     InputMessage::default().text(text).fmt_entities(entities)
 }
 
+fn formatted_message_parts(
+    markdown: &str,
+) -> (String, Vec<grammers_client::tl::enums::MessageEntity>) {
+    parse_markdown_message(markdown)
+}
 
-/// Edits a message using grammers' own peer resolution, falling back to respond on failure.
 pub async fn msg_edit_or_respond(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
     let chunks = split_text(text);
     let Some(first_chunk) = chunks.first() else {
@@ -42,7 +45,6 @@ pub async fn msg_edit_or_respond(runtime: &RuntimeState, msg: &Message, text: &s
     Ok(())
 }
 
-/// Edits a message using grammers' own peer resolution, no fallback.
 pub async fn msg_edit_only(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
     let chunks = split_text(text);
     let Some(first_chunk) = chunks.first() else {
@@ -55,7 +57,6 @@ pub async fn msg_edit_only(runtime: &RuntimeState, msg: &Message, text: &str) ->
     Ok(())
 }
 
-/// Sends a new message to the same chat using grammers' own peer resolution.
 pub async fn msg_respond(runtime: &RuntimeState, msg: &Message, text: &str) -> Result<()> {
     for chunk in split_text(text) {
         runtime.wait_for_telegram_send().await;
@@ -66,7 +67,6 @@ pub async fn msg_respond(runtime: &RuntimeState, msg: &Message, text: &str) -> R
     Ok(())
 }
 
-/// Deletes messages after passing through the shared Telegram call queue.
 pub async fn delete_messages(
     client: &Client,
     runtime: &RuntimeState,
@@ -78,14 +78,14 @@ pub async fn delete_messages(
     Ok(())
 }
 
-/// Marks a message as read after passing through the shared Telegram call queue.
 pub async fn mark_message_as_read(message: &Message, runtime: &RuntimeState) -> Result<()> {
     runtime.wait_for_telegram_send().await;
     message.mark_as_read().await?;
     Ok(())
 }
 
-/// Resolves a message peer, including Saved Messages.
+/// Falls back to an unhashed peer ID because only channels require an access hash.
+/// This produces an explicit API error when channel metadata is unavailable.
 pub async fn resolve_message_peer(client: &Client, msg: &Message) -> Result<PeerRef> {
     if is_saved_messages_peer(client, msg).await {
         return Ok(PeerRef {
@@ -98,17 +98,12 @@ pub async fn resolve_message_peer(client: &Client, msg: &Message) -> Result<Peer
         return Ok(peer_ref);
     }
 
-    // Fall back to the peer ID without an access hash. For regular users,
-    // chats, and self this is always valid. For channels/supergroups it may
-    // fail at the Telegram API level if the hash is missing, but that gives
-    // a clear API error rather than a silent "peer not in cache" crash.
     Ok(PeerRef {
         id: msg.peer_id(),
         auth: PeerAuth::default(),
     })
 }
 
-/// Splits text into chunks that are below Telegram's 4096 character limit.
 pub fn split_text(text: &str) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
@@ -146,7 +141,30 @@ async fn is_saved_messages_peer(client: &Client, msg: &Message) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::split_text;
+    use super::{formatted_message_input, formatted_message_parts, split_text};
+
+    #[test]
+    fn formatted_message_input_preserves_plain_and_empty_text() {
+        for source in ["", "plain text"] {
+            let (text, entities) = formatted_message_parts(source);
+            assert_eq!(text, source);
+            assert!(entities.is_empty());
+            let _ = formatted_message_input(source);
+        }
+    }
+
+    #[test]
+    fn formatted_message_input_parses_markdown_entities() {
+        let (text, entities) = formatted_message_parts("Hello **world**");
+
+        assert_eq!(text, "Hello world");
+        assert_eq!(entities.len(), 1);
+        let entity = format!("{:?}", entities[0]);
+        assert!(entity.contains("Bold"));
+        assert!(entity.contains("offset: 6"));
+        assert!(entity.contains("length: 5"));
+        let _ = formatted_message_input("Hello **world**");
+    }
 
     #[test]
     fn split_text_keeps_short_text() {

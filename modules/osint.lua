@@ -1,5 +1,3 @@
--- Lightweight OSINT helpers.
-
 local M = {}
 
 M.meta = { name = "osint", version = "1.0" }

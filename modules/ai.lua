@@ -1,5 +1,3 @@
--- Multi-provider AI helper.
-
 local M = {}
 
 M.meta = { name = "ai", version = "0.1" }

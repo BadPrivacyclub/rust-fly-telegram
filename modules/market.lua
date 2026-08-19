@@ -1,5 +1,3 @@
--- Curated marketplace client.
-
 local M = {}
 
 M.meta = { name = "market", version = "1.0" }
@@ -48,7 +46,7 @@ local function render_items(items, filter)
         local name = tostring(item.name or "")
         local desc = tostring(item.description or "")
         if filter == "" or name:lower():find(filter, 1, true) or desc:lower():find(filter, 1, true) then
-            table.insert(lines, "`" .. name .. "` - " .. desc)
+            table.insert(lines, "`" .. name .. "`: " .. desc)
         end
     end
     if #lines == 0 then

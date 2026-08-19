@@ -1,5 +1,3 @@
--- Group management controls.
-
 local M = {}
 
 M.meta = { name = "group", version = "1.0" }
@@ -34,7 +32,7 @@ function M.cleanjoins_cmd(ctx, args)
 end
 
 function M.group_cmd(ctx, args)
-    ctx:edit("**Group Tools**  \n`.cleanjoins on|off|status` - auto-delete join/leave service messages  \n`.captcha on|off|status|text <text>` - challenge new members")
+    ctx:edit("**Group Tools**  \n`.cleanjoins on|off|status`: auto-delete join/leave service messages  \n`.captcha on|off|status|text <text>`: challenge new members")
 end
 
 function M.captcha_cmd(ctx, args)

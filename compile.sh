@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─────────────────────────────────────────
-#   fly-telegram | Linux / macOS build script
-# ─────────────────────────────────────────
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 ok()   { echo -e "${GREEN}[OK]${NC}    $*"; }
 info() { echo -e "${BLUE}[INFO]${NC}  $*"; }
@@ -21,14 +17,12 @@ echo "  fly-telegram | Linux/macOS build"
 echo "========================================"
 echo
 
-# --- Check Rust / Cargo ---
 if ! command -v cargo &>/dev/null; then
     fail "Rust is not installed.\n\n  Install it with:\n    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n\n  Then restart your shell and run this script again."
 fi
 
 ok "$(cargo --version)"
 
-# Warn if the Rust toolchain is older than 1.75
 RUST_VERSION=$(rustc --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
 RUST_MAJOR=$(echo "$RUST_VERSION" | cut -d. -f1)
 RUST_MINOR=$(echo "$RUST_VERSION" | cut -d. -f2)
@@ -37,7 +31,6 @@ if [ "$RUST_MAJOR" -lt 1 ] || { [ "$RUST_MAJOR" -eq 1 ] && [ "$RUST_MINOR" -lt 7
     warn "Upgrade with: rustup update stable"
 fi
 
-# --- Check C compiler (required for Lua 5.4 vendored build) ---
 CC_FOUND=false
 for compiler in gcc clang cc; do
     if command -v "$compiler" &>/dev/null; then
@@ -69,11 +62,10 @@ if [ "$CC_FOUND" = false ]; then
     fi
 fi
 
-# --- Check Git (optional) ---
 if command -v git &>/dev/null; then
     ok "$(git --version)"
 else
-    info "Git not found — skipping version info"
+    info "Git not found, skipping version info"
 fi
 
 echo

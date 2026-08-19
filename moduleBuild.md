@@ -1,19 +1,16 @@
 # Module authoring guide
 
-fly-telegram modules are plain Lua 5.4 scripts. Place them in the `modules/` directory — they are loaded at startup and **hot-reloaded automatically** when the file is saved.
+fly-telegram modules are plain Lua 5.4 scripts. Place them in the `modules/` directory. They are loaded at startup and **hot-reloaded automatically** when the file is saved.
 
 ---
 
 ## Minimal module
 
 ```lua
--- modules/hello.lua
-
 local M = {}
 
 M.meta = { name = "hello", version = "1.0" }
 
--- Map command names (without the dot) to handler function names.
 M.commands = {
     hello = "hello_cmd",
 }
@@ -36,30 +33,24 @@ Every module file must return a table with the following fields:
 ```lua
 local M = {}
 
--- Required: metadata table.
 M.meta = {
-    name    = "my_module",   -- unique identifier
+    name    = "my_module",
     version = "1.0",
 }
 
--- Required: command → handler mapping.
--- Key   = command name (no dot prefix, lowercase).
--- Value = name of the function in this table.
 M.commands = {
     cmd      = "cmd_handler",
-    alias    = "cmd_handler",  -- aliases are supported
+    alias    = "cmd_handler",
     another  = "another_handler",
 }
 
 function M.cmd_handler(ctx, args)
-    -- args is a string containing everything after the command name,
-    -- or an empty string if nothing was typed.
 end
 
 function M.another_handler(ctx, args)
 end
 
-return M  -- must be the last statement
+return M
 ```
 
 ---
@@ -80,7 +71,7 @@ Every handler receives `ctx` as its first argument. The following methods are av
 | `ctx:download_url(url, name)` | Download an HTTP(S) URL under `data/downloads/` |
 | `ctx:send_file(path, caption)` | Upload and send a relative local file path |
 
-These methods are **async** — Lua awaits them automatically inside a handler.
+These methods are **async**. Lua awaits them automatically inside a handler.
 
 ### Database
 
@@ -158,7 +149,7 @@ end
 
 ## Command arguments
 
-The `args` parameter is a plain string — everything the user typed after the command name, trimmed of leading/trailing spaces.
+The `args` parameter is a plain string containing everything the user typed after the command name, trimmed of leading and trailing spaces.
 
 ```
 User sends:   .greet Alice Bob
@@ -173,7 +164,6 @@ function M.greet_cmd(ctx, args)
         ctx:edit("Usage: .greet <name>")
         return
     end
-    -- Split on first space to get the first word.
     local name = args:match("^(%S+)")
     ctx:edit("Hello, " .. name .. "!")
 end
@@ -188,7 +178,6 @@ Wrap risky code in `pcall` to prevent the handler from crashing the module:
 ```lua
 function M.safe_cmd(ctx, args)
     local ok, err = pcall(function()
-        -- something that might fail
         error("oops")
     end)
     if not ok then
@@ -261,7 +250,7 @@ The file watcher monitors the `modules/` directory. When you save a `.lua` file:
 2. The new file is executed.
 3. The module is registered with its updated command table.
 
-There is no need to restart the process. If the new file has a syntax error, the old module stays unloaded and the error is printed to the log — fix the file and save again.
+There is no need to restart the process. If the new file has a syntax error, the old module stays unloaded and the error is printed to the log. Fix the file and save again.
 
 ---
 
@@ -281,7 +270,7 @@ The full Lua 5.4 standard library is available inside modules, including:
 
 - `string`, `table`, `math`, `io`, `os`, `utf8`
 - `pcall`, `xpcall`, `error`, `load`, `loadfile`
-- `require` — can load other Lua files relative to `modules/`
+- `require`: can load other Lua files relative to `modules/`
 
 > **Note:** `io.popen` and `os.execute` run shell commands as the user that launched the bot. Use them carefully.
 
@@ -290,11 +279,6 @@ The full Lua 5.4 standard library is available inside modules, including:
 ## Example: full module
 
 ```lua
--- modules/note.lua
--- Simple note-taking module.
--- .note save <text>   — save a note
--- .note get           — retrieve the note
-
 local M = {}
 
 M.meta     = { name = "note", version = "1.0" }

@@ -1,5 +1,3 @@
--- Text animation commands.
-
 local M = {}
 
 M.meta = { name = "animate", version = "1.1" }
@@ -11,7 +9,7 @@ M.commands = {
     heart = "heart_cmd",
 }
 
--- Returns a table of individual UTF-8 characters (safe for any language).
+-- Iterate over Unicode code points to avoid splitting UTF-8 sequences.
 local function chars(s)
     local t = {}
     for ch in s:gmatch(utf8.charpattern) do
@@ -20,7 +18,7 @@ local function chars(s)
     return t
 end
 
--- Clamps text to 120 characters (by codepoint, not bytes).
+-- Limit by code point so multibyte text is never truncated mid-character.
 local function clamp_text(args, usage)
     if args == "" then
         return nil, usage

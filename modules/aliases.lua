@@ -1,5 +1,3 @@
--- Alias module.
-
 local M = {}
 
 M.meta = { name = "aliases", version = "1.0" }

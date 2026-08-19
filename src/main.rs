@@ -60,15 +60,14 @@ async fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("--sign requires a path argument"))?;
         let lua_path = Path::new(lua_path_str);
 
-        let source = std::fs::read_to_string(lua_path)
-            .with_context(|| format!("reading {lua_path:?}"))?;
+        let source =
+            std::fs::read_to_string(lua_path).with_context(|| format!("reading {lua_path:?}"))?;
 
         let manifest_path = loader::manifest::manifest_path(lua_path);
         let mut manifest: loader::manifest::ModuleManifest = if manifest_path.exists() {
             let raw = std::fs::read_to_string(&manifest_path)
                 .with_context(|| format!("reading {manifest_path:?}"))?;
-            serde_json::from_str(&raw)
-                .with_context(|| format!("parsing {manifest_path:?}"))?
+            serde_json::from_str(&raw).with_context(|| format!("parsing {manifest_path:?}"))?
         } else {
             loader::manifest::ModuleManifest::inferred(
                 lua_path
@@ -88,8 +87,7 @@ async fn main() -> Result<()> {
         let payload = loader::manifest::signing_payload(&manifest, &sha256);
         let sig_bytes = crypto::sign_bytes(&payload, &sk);
 
-        manifest.signature =
-            Some(base64::engine::general_purpose::STANDARD.encode(sig_bytes));
+        manifest.signature = Some(base64::engine::general_purpose::STANDARD.encode(sig_bytes));
         manifest.checksum = Some(sha256);
         manifest.trusted = true;
 
@@ -128,12 +126,9 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Inline bot runs as a background task so it never races with the userbot
-    // in tokio::select!. If the token is absent it exits immediately (Ok),
-    // leaving the userbot unaffected.
+    // Keep the optional bot outside the userbot's shutdown path.
     tokio::spawn(bot::run(Arc::clone(&db)));
 
-    // Block until the userbot exits (Ctrl-C or fatal error).
     let run_result = client::run(
         Arc::clone(&db),
         Arc::clone(&loader),

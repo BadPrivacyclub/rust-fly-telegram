@@ -1,5 +1,3 @@
--- Module installer.
-
 local M = {}
 
 M.meta = { name = "installer", version = "1.1" }

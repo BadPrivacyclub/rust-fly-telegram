@@ -8,21 +8,26 @@ A fast Telegram userbot written in Rust. Uses [grammers](https://codeberg.org/Lo
 
 ## Features
 
-### Built-in commands
+### Included commands
 
-All commands use `.` as the prefix and only respond to **your own messages**.
+Commands use `.` as the prefix and only respond to **your own messages**. Their availability depends on the corresponding Lua module, permissions, configuration, and any external services noted below.
 
-| Command | Alias | Description |
+| Area | Commands | Description |
 |---|---|---|
-| `.ping` | — | Replies with `pong` to check connectivity |
-| `.eval <expression>` | `.e` | Evaluates a Lua expression and shows the result |
-| `.term <command>` | — | Runs a shell command and shows its output |
-| `.install <file-or-url> [name]` | — | Installs a Lua module into `modules/` |
-| `.note set|get|clear` | — | Stores and reads a simple note |
-| `.alias set|get|del` | — | Stores and reads text aliases |
-| `.help` | — | Shows all available commands |
-| `.restart` | — | Saves state and restarts the process |
-| `.update` | — | Checks for updates (stub, extend via module) |
+| Core | `.ping`, `.help` | Checks connectivity and displays command help |
+| Execution | `.eval`, `.e`, `.term` | Evaluates Lua expressions or runs shell commands |
+| Notes and aliases | `.note`, `.alias` | Stores notes and text aliases |
+| Module management | `.install`, `.market` | Installs local or remote modules and uses the module marketplace |
+| Files | `.dl`, `.sendfile`, `.urlupload`, `.rename` | Downloads, sends, uploads, and renames files |
+| Message tools | `.del`, `.info`, `.sd`, `.ytdl` | Manages messages and chat information; `.ytdl` requires `yt-dlp` |
+| Handlers | `.afk`, `.autoread`, `.antidelete`, `.pmguard` | Controls automatic message handling and private message protection |
+| Group tools | `.cleanjoins`, `.captcha`, `.group` | Configures group protection |
+| OSINT | `.ip`, `.domain`, `.rdap` | Performs network and domain lookups |
+| AI | `.ai`, `.ask`, `.summarize`, `.transcribe`, `.translate` | Uses configured AI providers |
+| Music | `.play`, `.vplay`, `.queue`, `.skip`, `.seek`, `.loop`, `.shuffle`, `.stop`, `.toptracks` | Controls the external `music-worker` service |
+| Animations | `.type`, `.scroll`, `.magic`, `.heart` | Produces text animations |
+| Automation | `.gifts`, `.taskbot` | Runs dry run automation hooks |
+| Process control | `.restart`, `.update` | Terminates the process for an external supervisor, or pulls changes and rebuilds when required |
 
 ### Inline bot
 
@@ -30,9 +35,9 @@ A paired Telegram bot handles inline queries and button callbacks. Modules can r
 
 ### Module system
 
-Modules are plain Lua 5.4 files placed in the `modules/` directory. They are loaded at startup and **hot-reloaded automatically** whenever a file changes — no restart needed.
+Modules are plain Lua 5.4 files placed in the `modules/` directory. They are loaded at startup and **hot-reloaded automatically** whenever a file changes. No restart is needed.
 
-Each module receives a `ctx` object with the full Telegram and database API. See [moduleBuild.md](moduleBuild.md) for the full module authoring guide.
+Each module receives a `ctx` object with Telegram and database APIs. Sensitive operations are controlled by manifest permissions and the Lua sandbox. See [moduleBuild.md](moduleBuild.md) for the full module authoring guide.
 
 ### Persistent database
 
@@ -76,13 +81,17 @@ apply to new MTProto connections after restart.
 
 ### Master password
 
-Set `FLY_MASTER_PASSWORD` before launch to encrypt local state at rest:
+Set `FLY_MASTER_PASSWORD` before launch to encrypt the main database, the default session, and anti-delete storage at rest:
+
+Linux and macOS:
 
 ```bash
-# Linux / macOS
 export FLY_MASTER_PASSWORD="change-me"
+```
 
-# Windows (PowerShell)
+Windows PowerShell:
+
+```powershell
 $env:FLY_MASTER_PASSWORD = "change-me"
 ```
 
@@ -90,6 +99,11 @@ When enabled, `database.json` is written as `database.json.enc`, and
 `fly-telegram.session` is sealed as `fly-telegram.session.enc` after a normal
 shutdown. The clear session file exists while the process is running because
 `grammers` needs a SQLite session file.
+
+Additional account sessions under `sessions/` are not currently encrypted. Use
+Ctrl+C for a graceful shutdown that seals the default session. The `.restart`
+command terminates the process and expects an external supervisor to start it
+again.
 
 Anti-delete storage follows the same master password. With encryption enabled,
 `data/antidelete.sqlite` is sealed as `data/antidelete.sqlite.enc` at rest.
@@ -102,25 +116,31 @@ The `notify` crate watches the `modules/` directory. When a `.lua` file is saved
 
 Modules that declare `"trusted": true` in their manifest gain access to the full Lua runtime (no sandbox). Without signing, any file dropped into `modules/` with that flag would immediately obtain elevated privileges.
 
-The signing system binds the `trusted` flag to an **operator-held Ed25519 key pair**. On load, the runtime verifies the signature against the module source and its security-relevant manifest fields (`name`, `version`, `permissions`, `trusted`). A missing or invalid signature forces `trusted` to `false` with a warning — even after a hot-reload of a tampered file.
+The signing system binds the `trusted` flag to an **operator-held Ed25519 key pair**. On load, the runtime verifies the signature against the module source and its security-relevant manifest fields (`name`, `version`, `permissions`, `trusted`). A missing or invalid signature forces `trusted` to `false` with a warning, even after a hot-reload of a tampered file.
 
 #### Setup (one-time)
 
 ```bash
-./fly-telegram --keygen
-# prompts for a signing password
-# writes keys/signing.key.enc  (encrypted private key)
-#        keys/signing.pub       (raw public key, 32 bytes)
+./target/release/fly-telegram --keygen
 ```
+
+```powershell
+.\target\release\fly-telegram.exe --keygen
+```
+
+The command prompts for a signing password and writes the encrypted private key to `keys/signing.key.enc` and the raw public key to `keys/signing.pub`.
 
 #### Signing a module
 
 ```bash
-./fly-telegram --sign modules/core.lua
-# prompts for the signing password
-# writes the base64 signature into core.lua.manifest.json
-# also refreshes the checksum field (SHA-256 of the source)
+./target/release/fly-telegram --sign modules/core.lua
 ```
+
+```powershell
+.\target\release\fly-telegram.exe --sign modules\core.lua
+```
+
+The command prompts for the signing password, writes the Base64 signature into `core.lua.manifest.json`, and refreshes the source checksum.
 
 Repeat for every module that needs `"trusted": true`. Modules without a valid signature are sandboxed automatically.
 
@@ -130,7 +150,7 @@ Repeat for every module that needs `"trusted": true`. Modules without a valid si
 {"name":"core","permissions":[...],"source_sha256":"<hex>","trusted":true,"version":"1.0.0"}
 ```
 
-Keys are sorted lexicographically — the payload is deterministic. Changing the source file, permissions, name, or version invalidates the signature.
+Keys are sorted lexicographically, making the payload deterministic. Changing the source file, permissions, name, or version invalidates the signature.
 
 If `keys/signing.pub` is absent, all modules run sandboxed regardless of their manifest.
 
@@ -138,13 +158,13 @@ If `keys/signing.pub` is absent, all modules run sandboxed regardless of their m
 
 ## Requirements
 
-| Tool | Minimum version | Notes |
+| Tool | Requirement | Notes |
 |---|---|---|
-| Rust + Cargo | 1.75 | Install via [rustup.rs](https://rustup.rs) |
-| C compiler | — | MSVC (Windows) or GCC/Clang (Linux/macOS) — required to compile Lua 5.4 |
-| Git | any | Needed to clone the repo |
+| Rust + Cargo | 1.75 or newer recommended | Install via [rustup.rs](https://rustup.rs) |
+| C compiler | Required | Use MSVC on Windows or GCC/Clang on Linux and macOS to compile Lua 5.4 |
+| Git | Required | Used to clone the repository and by the `.update` command |
 
-No system Lua installation is required — Lua 5.4 is compiled and bundled automatically by Cargo (`vendored` feature).
+No system Lua installation is required. Lua 5.4 is compiled and bundled automatically by Cargo (`vendored` feature).
 
 ---
 
@@ -156,14 +176,19 @@ Go to [https://my.telegram.org/auth](https://my.telegram.org/auth), sign in, ope
 
 ### 2. Clone and build
 
-```bash
-git clone <repo-url>
+Windows:
+
+```powershell
+git clone https://github.com/BadPrivacyclub/rust-fly-telegram.git
 cd rust-fly-telegram
-
-# Windows
 compile.bat
+```
 
-# Linux / macOS
+On Linux or macOS:
+
+```bash
+git clone https://github.com/BadPrivacyclub/rust-fly-telegram.git
+cd rust-fly-telegram
 chmod +x compile.sh
 ./compile.sh
 ```
@@ -178,33 +203,45 @@ The binary is placed at `target/release/fly-telegram` (Linux/macOS) or `target\r
 
 ### 3. First run
 
-```bash
-# Linux / macOS
-./target/release/fly-telegram
+Linux and macOS:
 
-# Windows
+```bash
+./target/release/fly-telegram
+```
+
+Windows:
+
+```powershell
 .\target\release\fly-telegram.exe
 ```
 
-On first launch you will be prompted for:
+By default, the application starts its authorization server. Open
+`http://127.0.0.1:8080` and enter your API ID, API hash, phone number, optional
+session name, and optional SOCKS5 proxy. Telegram sends a login code and may ask
+for your 2FA password. The authorization server closes after a successful login
+and the dashboard starts on the same address.
 
-1. **API ID** — integer from my.telegram.org
-2. **API hash** — string from my.telegram.org
-3. **Phone number** — in international format, e.g. `+79001234567`
-4. **Login code** — sent to your Telegram account
-5. **2FA password** — only if your account has two-factor authentication enabled
+Pass `--no-web` to skip the web authorization form. In this mode the terminal
+prompts for the API ID, API hash, phone number, login code, and optional 2FA
+password. The dashboard still starts after the account connects.
 
-Credentials are saved to `database.json`. The session key is saved to `fly-telegram.session`. Neither file should be committed to version control.
+Credentials are saved to `database.json`, or to `database.json.enc` when a
+master password is configured. The default Telegram session is stored in
+`fly-telegram.session`. These files must not be committed to version control.
 
 ### 4. Inline bot (optional)
 
-Create a bot via [@BotFather](https://t.me/BotFather) and set the `TELOXIDE_TOKEN` environment variable before launching:
+Create a bot via [@BotFather](https://t.me/BotFather) and set the `TELOXIDE_TOKEN` environment variable before launching. As an alternative, store the token under `bot_token` in `database.json`.
+
+Linux and macOS:
 
 ```bash
-# Linux / macOS
 export TELOXIDE_TOKEN="123456789:AAxxxxxx"
+```
 
-# Windows (PowerShell)
+Windows PowerShell:
+
+```powershell
 $env:TELOXIDE_TOKEN = "123456789:AAxxxxxx"
 ```
 
@@ -214,41 +251,25 @@ Enable inline mode for the bot in BotFather (`/setinline`).
 
 ## Project structure
 
-```
-rust-fly-telegram/
-├── src/
-│   ├── main.rs            Entry point, --keygen / --sign CLI
-│   ├── config.rs          Compile-time path constants
-│   ├── crypto.rs          Argon2 + XChaCha20 encryption, Ed25519 signing
-│   ├── database.rs        JSON key-value store
-│   ├── watcher.rs         Hot-reload file watcher
-│   ├── client/
-│   │   ├── mod.rs         grammers update loop
-│   │   └── auth.rs        CLI + web authorization
-│   ├── loader/
-│   │   ├── mod.rs         Lua module loader & dispatcher
-│   │   ├── manifest.rs    Manifest parsing, signature verification
-│   │   └── context.rs     ctx UserData exposed to Lua
-│   ├── bot/
-│   │   └── mod.rs         teloxide inline bot
-│   └── web/
-│       ├── mod.rs         axum login server
-│       └── login.html     Login page
-├── modules/               Lua modules (hot-reloaded)
-│   ├── core.lua
-│   ├── executor.lua
-│   ├── help.lua
-│   └── updater.lua
-├── keys/                  Created by --keygen (do not commit)
-│   ├── signing.pub        Ed25519 verifying key (32 bytes)
-│   └── signing.key.enc    Ed25519 signing key (encrypted)
-├── database.json          Created on first run
-├── fly-telegram.session   Created on first run
-├── compile.bat            Windows build script
-├── compile.sh             Linux/macOS build script
-├── README.md
-└── moduleBuild.md         Module authoring guide
-```
+- `src/`: Rust application source.
+  - `main.rs`: userbot entry point and signing CLI.
+  - `music_worker.rs`: external voice chat music worker.
+  - `anti_delete.rs`: deleted message archive and search.
+  - `crypto.rs`: local encryption and module signing.
+  - `database.rs`: persistent JSON storage.
+  - `runtime.rs`: shared runtime status and counters.
+  - `client/`: Telegram update loop and authorization.
+  - `loader/`: Lua module loading, manifests, and runtime context.
+  - `bot/`: teloxide inline bot.
+  - `web/`: authorization server and web pages.
+- `modules/`: hot-reloaded Lua modules.
+- `keys/`: generated signing keys.
+- `sessions/`: additional Telegram account sessions.
+- `data/`: anti-delete storage, downloaded media, and temporary module files.
+- `database.json`: runtime configuration and state.
+- `fly-telegram.session`: Telegram session data.
+- `compile.bat` and `compile.sh`: platform build scripts.
+- `moduleBuild.md`: module authoring guide.
 
 ---
 
@@ -257,7 +278,7 @@ rust-fly-telegram/
 | Variable | Required | Description |
 |---|---|---|
 | `TELOXIDE_TOKEN` | Optional | Bot token for the inline bot subsystem |
-| `FLY_MASTER_PASSWORD` | Optional | Encrypts `database.json` and the session file at rest |
+| `FLY_MASTER_PASSWORD` | Optional | Encrypts the main database, default session, and anti-delete storage at rest |
 | `RUST_LOG` | Optional | Log level, e.g. `fly_telegram=debug` |
 
 ---
@@ -266,7 +287,7 @@ rust-fly-telegram/
 
 | Flag | Description |
 |---|---|
-| `--no-web` | Skip the web authorization server |
+| `--no-web` | Skip the web authorization form; the dashboard still starts after connection |
 | `--keygen` | Generate an Ed25519 key pair in `keys/` and exit |
 | `--sign <path>` | Sign a module's manifest with the operator key and exit |
 
@@ -274,4 +295,4 @@ rust-fly-telegram/
 
 ## License
 
-MIT
+[MIT](LICENSE)

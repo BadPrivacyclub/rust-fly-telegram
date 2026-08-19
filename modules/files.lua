@@ -1,5 +1,3 @@
--- File download, rename, and upload helpers.
-
 local M = {}
 
 M.meta = { name = "files", version = "1.0" }

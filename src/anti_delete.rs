@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use grammers_client::peer::Peer;
 use grammers_client::update::Message;
 use grammers_client::Client;
+use grammers_session::types::PeerId;
 use libsql::{params, Builder, Connection, Database as SqliteDatabase};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -23,7 +24,6 @@ const MAX_DELETE_LOG_LIMIT: i64 = 500;
 
 static SQLITE_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 
-/// Describes the account that observed a deleted message.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccountSnapshot {
     pub id: String,
@@ -31,7 +31,6 @@ pub struct AccountSnapshot {
     pub session_file: String,
 }
 
-/// Describes a Telegram chat for anti-delete grouping.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatSnapshot {
     pub id: String,
@@ -42,7 +41,6 @@ pub struct ChatSnapshot {
     pub avatar_path: Option<String>,
 }
 
-/// Stores the message data needed when Telegram later reports deletion.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedDeletedMessage {
     pub account: AccountSnapshot,
@@ -58,7 +56,6 @@ pub struct CachedDeletedMessage {
     pub media_size: Option<i64>,
 }
 
-/// Filters used by the dashboard delete-log view.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct DeleteLogFilters {
     pub q: Option<String>,
@@ -68,7 +65,6 @@ pub struct DeleteLogFilters {
     pub limit: Option<i64>,
 }
 
-/// Returns the full anti-delete store for the dashboard.
 pub async fn store(db: &Database) -> Value {
     let password = db.master_password().await;
     read_store(password)
@@ -76,7 +72,6 @@ pub async fn store(db: &Database) -> Value {
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
-/// Returns a flat, filtered delete log for the dashboard.
 pub async fn delete_log(db: &Database, filters: DeleteLogFilters) -> Value {
     let password = db.master_password().await;
     read_delete_log(password, filters)
@@ -84,7 +79,6 @@ pub async fn delete_log(db: &Database, filters: DeleteLogFilters) -> Value {
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
-/// Creates a cache snapshot from an incoming message.
 pub async fn snapshot_message(
     client: &Client,
     account: &AccountSnapshot,
@@ -111,7 +105,6 @@ pub async fn snapshot_message(
     }
 }
 
-/// Persists a deleted message under its account and chat.
 pub async fn record_deleted_message(
     db: &Database,
     cached: &CachedDeletedMessage,
@@ -134,7 +127,6 @@ pub async fn record_deleted_message(
     seal_database_file(password.as_deref()).await
 }
 
-/// Rewrites the anti-delete store when the master password changes.
 pub async fn rewrap_storage(
     current_password: Option<&str>,
     next_password: Option<&str>,
@@ -150,19 +142,30 @@ pub async fn rewrap_storage(
     }
 }
 
-/// Creates an account snapshot for anti-delete storage.
-pub async fn account_snapshot(client: &Client, session_file: &str) -> AccountSnapshot {
+pub async fn account_snapshot(
+    client: &Client,
+    session_file: &str,
+) -> (AccountSnapshot, Option<PeerId>) {
     match client.get_me().await {
-        Ok(user) => AccountSnapshot {
-            id: user.id().to_string(),
-            name: user.first_name().unwrap_or("Unknown account").to_string(),
-            session_file: session_file.to_string(),
-        },
-        Err(_) => AccountSnapshot {
-            id: "unknown".to_string(),
-            name: "Unknown account".to_string(),
-            session_file: session_file.to_string(),
-        },
+        Ok(user) => {
+            let user_id = user.id();
+            (
+                AccountSnapshot {
+                    id: user_id.to_string(),
+                    name: user.first_name().unwrap_or("Unknown account").to_string(),
+                    session_file: session_file.to_string(),
+                },
+                Some(user_id),
+            )
+        }
+        Err(_) => (
+            AccountSnapshot {
+                id: "unknown".to_string(),
+                name: "Unknown account".to_string(),
+                session_file: session_file.to_string(),
+            },
+            None,
+        ),
     }
 }
 
@@ -422,106 +425,120 @@ async fn insert_message(
 async fn read_store_from_connection(connection: &Connection) -> Result<Value> {
     let mut root = Map::new();
     let mut accounts = Map::new();
-    let mut account_rows = connection
+    let mut rows = connection
         .query(
-            "SELECT id, name, session_file FROM accounts ORDER BY name",
+            r#"
+            WITH ranked_messages AS (
+                SELECT
+                    account_id,
+                    chat_id,
+                    message_id,
+                    sender_id,
+                    text,
+                    sent_at,
+                    deleted_at,
+                    media_type,
+                    media_path,
+                    media_name,
+                    media_size,
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY account_id, chat_id
+                        ORDER BY id DESC
+                    ) AS message_rank
+                FROM deleted_messages
+            )
+            SELECT
+                accounts.id,
+                accounts.name,
+                accounts.session_file,
+                chats.id,
+                chats.title,
+                chats.kind,
+                chats.username,
+                chats.link,
+                chats.avatar_path,
+                ranked_messages.message_id,
+                ranked_messages.sender_id,
+                ranked_messages.text,
+                ranked_messages.sent_at,
+                ranked_messages.deleted_at,
+                ranked_messages.media_type,
+                ranked_messages.media_path,
+                ranked_messages.media_name,
+                ranked_messages.media_size
+            FROM accounts
+            LEFT JOIN chats ON chats.account_id = accounts.id
+            LEFT JOIN ranked_messages
+                ON ranked_messages.account_id = chats.account_id
+                AND ranked_messages.chat_id = chats.id
+                AND ranked_messages.message_rank <= 100
+            ORDER BY accounts.name, chats.title, ranked_messages.id DESC
+            "#,
             (),
         )
         .await?;
 
-    while let Some(row) = account_rows.next().await? {
-        let account = AccountSnapshot {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            session_file: row.get(2)?,
+    while let Some(row) = rows.next().await? {
+        let account_id = row.get::<String>(0)?;
+        if !accounts.contains_key(&account_id) {
+            let account = AccountSnapshot {
+                id: account_id.clone(),
+                name: row.get(1)?,
+                session_file: row.get(2)?,
+            };
+            accounts.insert(
+                account_id.clone(),
+                serde_json::json!({ "account": account, "chats": {} }),
+            );
+        }
+
+        let Some(chat_id) = row.get::<Option<String>>(3)? else {
+            continue;
         };
-        accounts.insert(account.id.clone(), read_account(connection, account).await?);
+        let chats = accounts
+            .get_mut(&account_id)
+            .and_then(|account| account.get_mut("chats"))
+            .and_then(Value::as_object_mut)
+            .expect("account chats are initialized as an object");
+        if !chats.contains_key(&chat_id) {
+            let chat = ChatSnapshot {
+                id: chat_id.clone(),
+                title: row.get(4)?,
+                kind: row.get(5)?,
+                username: row.get(6)?,
+                link: row.get(7)?,
+                avatar_path: row.get(8)?,
+            };
+            chats.insert(
+                chat_id.clone(),
+                serde_json::json!({ "chat": chat, "messages": [] }),
+            );
+        }
+
+        let Some(message_id) = row.get::<Option<i32>>(9)? else {
+            continue;
+        };
+        chats
+            .get_mut(&chat_id)
+            .and_then(|chat| chat.get_mut("messages"))
+            .and_then(Value::as_array_mut)
+            .expect("chat messages are initialized as an array")
+            .push(serde_json::json!({
+                "message_id": message_id,
+                "sender_id": row.get::<Option<String>>(10)?,
+                "text": row.get::<String>(11)?,
+                "sent_at": row.get::<String>(12)?,
+                "deleted_at": row.get::<String>(13)?,
+                "media_type": row.get::<Option<String>>(14)?,
+                "media_path": row.get::<Option<String>>(15)?,
+                "media_name": row.get::<Option<String>>(16)?,
+                "media_size": row.get::<Option<i64>>(17)?,
+            }));
     }
 
     root.insert("accounts".to_string(), Value::Object(accounts));
     Ok(Value::Object(root))
-}
-
-async fn read_account(connection: &Connection, account: AccountSnapshot) -> Result<Value> {
-    let mut value = Map::new();
-    value.insert("account".to_string(), serde_json::to_value(&account)?);
-
-    let mut chats = Map::new();
-    let mut chat_rows = connection
-        .query(
-            r#"
-            SELECT id, title, kind, username, link, avatar_path
-            FROM chats
-            WHERE account_id = ?1
-            ORDER BY title
-            "#,
-            params![account.id.as_str()],
-        )
-        .await?;
-
-    while let Some(row) = chat_rows.next().await? {
-        let chat = ChatSnapshot {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            kind: row.get(2)?,
-            username: row.get(3)?,
-            link: row.get(4)?,
-            avatar_path: row.get(5)?,
-        };
-        chats.insert(
-            chat.id.clone(),
-            read_chat(connection, &account.id, chat).await?,
-        );
-    }
-
-    value.insert("chats".to_string(), Value::Object(chats));
-    Ok(Value::Object(value))
-}
-
-async fn read_chat(connection: &Connection, account_id: &str, chat: ChatSnapshot) -> Result<Value> {
-    let mut value = Map::new();
-    value.insert("chat".to_string(), serde_json::to_value(&chat)?);
-    value.insert(
-        "messages".to_string(),
-        Value::Array(read_chat_messages(connection, account_id, &chat.id).await?),
-    );
-    Ok(Value::Object(value))
-}
-
-async fn read_chat_messages(
-    connection: &Connection,
-    account_id: &str,
-    chat_id: &str,
-) -> Result<Vec<Value>> {
-    let mut rows = connection
-        .query(
-            r#"
-            SELECT message_id, sender_id, text, sent_at, deleted_at
-            , media_type, media_path, media_name, media_size
-            FROM deleted_messages
-            WHERE account_id = ?1 AND chat_id = ?2
-            ORDER BY id DESC
-            LIMIT 100
-            "#,
-            params![account_id, chat_id],
-        )
-        .await?;
-
-    let mut messages = Vec::new();
-    while let Some(row) = rows.next().await? {
-        messages.push(serde_json::json!({
-            "message_id": row.get::<i32>(0)?,
-            "sender_id": row.get::<Option<String>>(1)?,
-            "text": row.get::<String>(2)?,
-            "sent_at": row.get::<String>(3)?,
-            "deleted_at": row.get::<String>(4)?,
-            "media_type": row.get::<Option<String>>(5)?,
-            "media_path": row.get::<Option<String>>(6)?,
-            "media_name": row.get::<Option<String>>(7)?,
-            "media_size": row.get::<Option<i64>>(8)?,
-        }));
-    }
-    Ok(messages)
 }
 
 async fn read_delete_log_from_connection(
@@ -678,6 +695,240 @@ fn normalized_exact(value: Option<&str>) -> Option<String> {
 mod tests {
     use super::*;
     use std::env;
+    use std::time::Instant;
+
+    #[tokio::test]
+    async fn read_store_builds_hierarchy_and_limits_each_chat_to_100_messages() {
+        let path = env::temp_dir().join(format!(
+            "fly_antidelete_store_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = Builder::new_local(&path)
+            .build()
+            .await
+            .expect("test sqlite database should be created");
+        let connection = database
+            .connect()
+            .expect("test sqlite connection should be opened");
+        init_schema(&connection)
+            .await
+            .expect("test schema should initialize");
+
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO accounts VALUES ('empty', 'Empty', 'empty.session');
+                INSERT INTO accounts VALUES ('active', 'Active', 'active.session');
+                INSERT INTO chats VALUES ('active', 'quiet', 'Quiet', 'User', NULL, NULL, NULL);
+                INSERT INTO chats VALUES ('active', 'busy', 'Busy', 'User', 'busy', 'https://t.me/busy', NULL);
+                "#,
+            )
+            .await
+            .expect("account and chat fixtures should load");
+        for message_id in 0..105 {
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO deleted_messages (
+                        account_id, chat_id, message_id, text, sent_at, deleted_at
+                    ) VALUES ('active', 'busy', ?1, ?2, 'sent', 'deleted')
+                    "#,
+                    params![message_id, format!("message {message_id}")],
+                )
+                .await
+                .expect("message fixture should load");
+        }
+
+        let store = read_store_from_connection(&connection)
+            .await
+            .expect("store should load with one joined query");
+
+        assert_eq!(store["accounts"]["empty"]["account"]["name"], "Empty");
+        assert_eq!(
+            store["accounts"]["empty"]["chats"]
+                .as_object()
+                .expect("empty account chats should be an object")
+                .len(),
+            0
+        );
+        assert_eq!(
+            store["accounts"]["active"]["chats"]["quiet"]["messages"]
+                .as_array()
+                .expect("quiet chat messages should be an array")
+                .len(),
+            0
+        );
+        let messages = store["accounts"]["active"]["chats"]["busy"]["messages"]
+            .as_array()
+            .expect("busy chat messages should be an array");
+        assert_eq!(messages.len(), 100);
+        assert_eq!(messages.first().expect("newest message")["message_id"], 104);
+        assert_eq!(
+            messages.last().expect("oldest retained message")["message_id"],
+            5
+        );
+
+        drop(connection);
+        drop(database);
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "manual performance benchmark"]
+    async fn benchmark_read_store_from_connection() {
+        let path = env::temp_dir().join(format!(
+            "fly_antidelete_benchmark_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = Builder::new_local(&path)
+            .build()
+            .await
+            .expect("benchmark sqlite database should be created");
+        let connection = database
+            .connect()
+            .expect("benchmark sqlite connection should be opened");
+        init_schema(&connection)
+            .await
+            .expect("benchmark schema should initialize");
+
+        let mut fixture = String::from("BEGIN;");
+        for account in 0..10 {
+            fixture.push_str(&format!(
+                "INSERT INTO accounts VALUES ('a{account}', 'Account {account:02}', 's{account}');"
+            ));
+            for chat in 0..20 {
+                fixture.push_str(&format!(
+                    "INSERT INTO chats VALUES ('a{account}', 'c{chat}', 'Chat {chat:02}', 'User', NULL, NULL, NULL);"
+                ));
+                for message in 0..10 {
+                    fixture.push_str(&format!(
+                        "INSERT INTO deleted_messages (account_id, chat_id, message_id, text, sent_at, deleted_at) VALUES ('a{account}', 'c{chat}', {message}, 'text', 'sent', 'deleted');"
+                    ));
+                }
+            }
+        }
+        fixture.push_str("COMMIT;");
+        connection
+            .execute_batch(&fixture)
+            .await
+            .expect("benchmark fixture should load");
+
+        let legacy_value = legacy_read_store_from_connection(&connection)
+            .await
+            .expect("legacy warm-up read should succeed");
+        let legacy_started = Instant::now();
+        for _ in 0..10 {
+            legacy_read_store_from_connection(&connection)
+                .await
+                .expect("legacy benchmark read should succeed");
+        }
+        let legacy_elapsed = legacy_started.elapsed();
+
+        let joined_value = read_store_from_connection(&connection)
+            .await
+            .expect("joined warm-up read should succeed");
+        assert_eq!(joined_value, legacy_value);
+        let joined_started = Instant::now();
+        for _ in 0..10 {
+            read_store_from_connection(&connection)
+                .await
+                .expect("joined benchmark read should succeed");
+        }
+        let joined_elapsed = joined_started.elapsed();
+        eprintln!("read_store 10 iterations: legacy={legacy_elapsed:?}, joined={joined_elapsed:?}");
+
+        drop(connection);
+        drop(database);
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    async fn legacy_read_store_from_connection(connection: &Connection) -> Result<Value> {
+        let mut accounts = Map::new();
+        let mut account_rows = connection
+            .query(
+                "SELECT id, name, session_file FROM accounts ORDER BY name",
+                (),
+            )
+            .await?;
+        while let Some(row) = account_rows.next().await? {
+            let account = AccountSnapshot {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                session_file: row.get(2)?,
+            };
+            accounts.insert(
+                account.id.clone(),
+                legacy_read_account(connection, account).await?,
+            );
+        }
+        Ok(serde_json::json!({ "accounts": accounts }))
+    }
+
+    async fn legacy_read_account(
+        connection: &Connection,
+        account: AccountSnapshot,
+    ) -> Result<Value> {
+        let mut chats = Map::new();
+        let mut chat_rows = connection
+            .query(
+                r#"
+                SELECT id, title, kind, username, link, avatar_path
+                FROM chats WHERE account_id = ?1 ORDER BY title
+                "#,
+                params![account.id.as_str()],
+            )
+            .await?;
+        while let Some(row) = chat_rows.next().await? {
+            let chat = ChatSnapshot {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                kind: row.get(2)?,
+                username: row.get(3)?,
+                link: row.get(4)?,
+                avatar_path: row.get(5)?,
+            };
+            let messages = legacy_read_chat_messages(connection, &account.id, &chat.id).await?;
+            chats.insert(
+                chat.id.clone(),
+                serde_json::json!({ "chat": chat, "messages": messages }),
+            );
+        }
+        Ok(serde_json::json!({ "account": account, "chats": chats }))
+    }
+
+    async fn legacy_read_chat_messages(
+        connection: &Connection,
+        account_id: &str,
+        chat_id: &str,
+    ) -> Result<Vec<Value>> {
+        let mut rows = connection
+            .query(
+                r#"
+                SELECT message_id, sender_id, text, sent_at, deleted_at,
+                    media_type, media_path, media_name, media_size
+                FROM deleted_messages
+                WHERE account_id = ?1 AND chat_id = ?2
+                ORDER BY id DESC LIMIT 100
+                "#,
+                params![account_id, chat_id],
+            )
+            .await?;
+        let mut messages = Vec::new();
+        while let Some(row) = rows.next().await? {
+            messages.push(serde_json::json!({
+                "message_id": row.get::<i32>(0)?,
+                "sender_id": row.get::<Option<String>>(1)?,
+                "text": row.get::<String>(2)?,
+                "sent_at": row.get::<String>(3)?,
+                "deleted_at": row.get::<String>(4)?,
+                "media_type": row.get::<Option<String>>(5)?,
+                "media_path": row.get::<Option<String>>(6)?,
+                "media_name": row.get::<Option<String>>(7)?,
+                "media_size": row.get::<Option<i64>>(8)?,
+            }));
+        }
+        Ok(messages)
+    }
 
     #[tokio::test]
     async fn init_schema_migrates_existing_delete_log_media_columns() {

@@ -1,5 +1,3 @@
--- Executor module: evaluate Lua expressions and stream shell output.
-
 local M = {}
 
 M.meta = { name = "executor", version = "1.1" }

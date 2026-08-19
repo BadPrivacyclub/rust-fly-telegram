@@ -14,9 +14,6 @@ use uuid::Uuid;
 use crate::config::{env_key, DATABASE_FILE};
 use crate::database::Database;
 
-// ── Registry ──────────────────────────────────────────────────────────────────
-
-/// A pending inline result waiting to be shown.
 #[derive(Clone)]
 pub struct InlineResult {
     pub title: String,
@@ -24,15 +21,12 @@ pub struct InlineResult {
     pub buttons: Vec<Vec<InlineButton>>,
 }
 
-/// A single inline keyboard button.
 #[derive(Clone)]
 pub struct InlineButton {
     pub label: String,
-    /// UUID stored as callback_data; looked up in `InlineRegistry::callbacks`.
     pub callback_id: String,
 }
 
-/// Shared inline bot state, accessible from Lua modules via ctx.
 pub struct InlineRegistry {
     pub results: RwLock<HashMap<String, InlineResult>>,
     pub callbacks: RwLock<HashMap<String, Arc<dyn Fn() + Send + Sync>>>,
@@ -46,7 +40,6 @@ impl InlineRegistry {
         })
     }
 
-    /// Registers an inline result and returns the UUID to send as a query.
     #[allow(dead_code)]
     pub async fn register(&self, result: InlineResult) -> String {
         let id = Uuid::new_v4().to_string();
@@ -55,22 +48,14 @@ impl InlineRegistry {
     }
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
-/// Starts the teloxide inline bot dispatcher.
-///
-/// The bot token is read from the `bot_token` key in the database.
-/// If the key is absent, the `TELOXIDE_TOKEN` environment variable is tried next.
-/// If neither is set, the inline bot subsystem is skipped with a warning.
 pub async fn run(db: Arc<Database>) -> Result<()> {
     let token = resolve_token(&db).await;
 
     let Some(token) = token else {
         warn!(
-            "no bot token found — inline bot disabled. \
+            "no bot token found, inline bot disabled. \
              Set TELOXIDE_TOKEN env var or add bot_token to {DATABASE_FILE}"
         );
-        // Return immediately so tokio::select! in main.rs doesn't block.
         return Ok(());
     };
 
@@ -104,9 +89,6 @@ pub async fn run(db: Arc<Database>) -> Result<()> {
     Ok(())
 }
 
-// ── Token resolution ──────────────────────────────────────────────────────────
-
-/// Returns the bot token, trying the database first, then the environment.
 async fn resolve_token(db: &Database) -> Option<String> {
     let db_value = db.get("bot_token").await;
     if let Some(s) = db_value.as_str() {
@@ -119,8 +101,6 @@ async fn resolve_token(db: &Database) -> Option<String> {
         .ok()
         .filter(|s| !s.is_empty())
 }
-
-// ── Update handlers ───────────────────────────────────────────────────────────
 
 async fn handle_inline_query(
     bot: Bot,
@@ -153,7 +133,7 @@ async fn handle_callback_query(
     query: CallbackQuery,
     registry: Arc<InlineRegistry>,
 ) -> ResponseResult<()> {
-    // Always acknowledge immediately to clear the spinner.
+    // Telegram keeps the client spinner active until every callback is acknowledged.
     bot.answer_callback_query(query.id.clone()).await?;
 
     if let Some(data) = &query.data {

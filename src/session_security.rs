@@ -6,7 +6,6 @@ use tokio::sync::RwLock;
 
 use crate::crypto;
 
-/// Handles session-file encryption while the process is not running.
 pub struct SessionSecurity {
     plain_path: PathBuf,
     encrypted_path: PathBuf,
@@ -14,7 +13,6 @@ pub struct SessionSecurity {
 }
 
 impl SessionSecurity {
-    /// Creates a guard for a Telegram session file.
     pub fn new(path: impl AsRef<Path>, master_password: Arc<RwLock<Option<String>>>) -> Self {
         let plain_path = path.as_ref().to_path_buf();
         let encrypted_path = encrypted_path(&plain_path);
@@ -25,7 +23,6 @@ impl SessionSecurity {
         }
     }
 
-    /// Decrypts the session before `grammers` opens it.
     pub async fn prepare(&self) -> Result<()> {
         let password = self.master_password.read().await.clone();
         let Some(password) = password.as_deref() else {
@@ -41,7 +38,6 @@ impl SessionSecurity {
         Ok(())
     }
 
-    /// Encrypts the session after the userbot stops.
     pub async fn seal(&self) -> Result<()> {
         let password = self.master_password.read().await.clone();
         let Some(password) = password.as_deref() else {
