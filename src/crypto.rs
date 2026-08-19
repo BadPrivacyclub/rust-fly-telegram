@@ -15,12 +15,10 @@ const VERSION: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 
-/// Symmetric master key derived from a user password.
 #[derive(Clone)]
 pub struct MasterKey([u8; 32]);
 
 impl MasterKey {
-    /// Derives the master key from a password and salt.
     pub fn derive(password: &str, salt: &[u8]) -> Result<Self> {
         let mut key = [0_u8; 32];
         Argon2::default()
@@ -44,7 +42,6 @@ struct EncryptedBlob {
     ciphertext: String,
 }
 
-/// Encrypts bytes with a password using Argon2id and XChaCha20-Poly1305.
 pub fn encrypt_with_password(plain: &[u8], password: &str) -> Result<Vec<u8>> {
     let mut salt = [0_u8; SALT_LEN];
     let mut nonce = [0_u8; NONCE_LEN];
@@ -69,29 +66,22 @@ pub fn encrypt_with_password(plain: &[u8], password: &str) -> Result<Vec<u8>> {
     serde_json::to_vec_pretty(&blob).context("serializing encrypted blob")
 }
 
-/// Generates a fresh Ed25519 key pair.
 pub fn generate_keypair() -> (SigningKey, VerifyingKey) {
     let sk = SigningKey::generate(&mut OsRng);
     let vk = sk.verifying_key();
     (sk, vk)
 }
 
-/// Signs `payload` with the given signing key; returns raw 64-byte signature.
 pub fn sign_bytes(payload: &[u8], key: &SigningKey) -> [u8; 64] {
     key.sign(payload).to_bytes()
 }
 
-/// Returns true iff the raw 64-byte `sig` is a valid Ed25519 signature over `payload`.
 #[allow(dead_code)]
 pub fn verify_bytes(payload: &[u8], sig: &[u8; 64], key: &VerifyingKey) -> bool {
     let sig = Signature::from_bytes(sig);
     key.verify(payload, &sig).is_ok()
 }
 
-/// Encrypts and saves an Ed25519 key pair to disk.
-///
-/// - `enc_path`: private key encrypted via [`encrypt_with_password`]
-/// - `pub_path`: verifying key as raw 32 bytes
 pub fn save_keypair(
     sk: &SigningKey,
     vk: &VerifyingKey,
@@ -108,8 +98,6 @@ pub fn save_keypair(
     Ok(())
 }
 
-/// Loads the verifying key from a file containing 32 raw bytes.
-/// Returns `None` if the file does not exist.
 pub fn load_verifying_key(path: &Path) -> Result<Option<VerifyingKey>> {
     if !path.exists() {
         return Ok(None);
@@ -121,7 +109,6 @@ pub fn load_verifying_key(path: &Path) -> Result<Option<VerifyingKey>> {
     Ok(Some(VerifyingKey::from_bytes(&arr)?))
 }
 
-/// Loads and decrypts the signing key from an encrypted file.
 pub fn load_signing_key(path: &Path, password: &str) -> Result<SigningKey> {
     let encrypted = std::fs::read(path).with_context(|| format!("reading {path:?}"))?;
     let raw = decrypt_with_password(&encrypted, password)?;
@@ -131,7 +118,6 @@ pub fn load_signing_key(path: &Path, password: &str) -> Result<SigningKey> {
     Ok(SigningKey::from_bytes(&arr))
 }
 
-/// Decrypts bytes that were written by [`encrypt_with_password`].
 pub fn decrypt_with_password(encrypted: &[u8], password: &str) -> Result<Vec<u8>> {
     let blob: EncryptedBlob =
         serde_json::from_slice(encrypted).context("reading encrypted blob")?;

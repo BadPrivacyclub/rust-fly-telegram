@@ -24,9 +24,6 @@ use super::installer;
 const GROUP_INFO_SCAN_LIMIT: usize = 20_000;
 const GROUP_INFO_SEARCH_PAGE_LIMIT: i32 = 100;
 
-/// Lua context object passed to every module handler.
-///
-/// Exposes Telegram actions and the database to Lua scripts.
 #[derive(Clone)]
 pub struct Ctx {
     pub client: Client,
@@ -36,7 +33,6 @@ pub struct Ctx {
     module_name: String,
     permissions: Vec<String>,
     trusted: bool,
-    /// The message that triggered the current handler.
     pub message: Arc<Mutex<Option<Message>>>,
 }
 
@@ -87,7 +83,6 @@ impl Ctx {
 
 impl UserData for Ctx {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // Replies to the current message.
         methods.add_async_method("reply", |_, ctx, text: String| async move {
             let msg = {
                 let guard = ctx.message.lock().await;
@@ -101,7 +96,6 @@ impl UserData for Ctx {
             Ok(())
         });
 
-        // Edits the current message.
         methods.add_async_method("edit", |_, ctx, text: String| async move {
             let msg = {
                 let guard = ctx.message.lock().await;
@@ -115,7 +109,6 @@ impl UserData for Ctx {
             Ok(())
         });
 
-        // Deletes the current message.
         methods.add_async_method("delete", |_, ctx, ()| async move {
             let msg = {
                 let guard = ctx.message.lock().await;
@@ -130,13 +123,11 @@ impl UserData for Ctx {
             Ok(())
         });
 
-        // Returns a value from the database.
         methods.add_async_method("db_get", |lua, ctx, key: String| async move {
             let value = ctx.db.get(&key).await;
             lua.to_value(&value)
         });
 
-        // Stores a value in the database.
         methods.add_async_method(
             "db_set",
             |_, ctx, (key, value): (String, mlua::Value)| async move {

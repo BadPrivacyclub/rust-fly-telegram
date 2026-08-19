@@ -106,7 +106,7 @@ pub async fn load_manifest(
             .unwrap_or(false);
         if !ok {
             tracing::warn!(
-                "module '{}': trusted flag cleared — missing or invalid signature",
+                "module '{}': trusted flag cleared because its signature is missing or invalid",
                 manifest.name
             );
             manifest.trusted = false;
@@ -270,15 +270,12 @@ pub fn required_modules(source: &str) -> Vec<String> {
     modules
 }
 
-/// Returns the hex-encoded SHA-256 of the given source string.
 pub fn source_sha256(source: &str) -> String {
     let hash = Sha256::digest(source.as_bytes());
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Builds the deterministic JSON payload that is signed / verified.
-///
-/// Keys are sorted lexicographically (via BTreeMap) for a stable byte sequence.
+/// Builds a canonical signing payload with lexicographically sorted keys.
 pub fn signing_payload(manifest: &ModuleManifest, sha256: &str) -> Vec<u8> {
     let mut map: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
     map.insert("name", serde_json::Value::String(manifest.name.clone()));
@@ -304,8 +301,6 @@ pub fn signing_payload(manifest: &ModuleManifest, sha256: &str) -> Vec<u8> {
     serde_json::to_vec(&map).expect("BTreeMap serialization is infallible")
 }
 
-/// Returns `true` iff the manifest carries a valid Ed25519 signature that covers
-/// the source file hash, name, version, permissions, and the trusted flag.
 pub fn verify_trusted(manifest: &ModuleManifest, source: &str, vk: &VerifyingKey) -> bool {
     if !manifest.trusted {
         return false;
@@ -629,14 +624,12 @@ mod tests {
             "valid sig should verify"
         );
 
-        // Tampered permissions invalidate the signature.
         manifest.permissions.push("network".to_string());
         assert!(
             !verify_trusted(&manifest, source, &vk),
             "bad perms should fail"
         );
 
-        // Restore permissions but change source.
         manifest.permissions.pop();
         assert!(
             !verify_trusted(&manifest, "-- different source\n", &vk),
@@ -644,8 +637,7 @@ mod tests {
         );
     }
 
-    /// Mock ctx table with every method the Lua modules may call.
-    /// Methods that do real I/O are replaced with no-ops or return minimal valid data.
+    /// Preserves the Lua API shape while replacing external effects with deterministic values.
     fn make_mock_ctx(lua: &mlua::Lua) -> mlua::Table {
         lua.load(
             r#"
@@ -677,7 +669,6 @@ mod tests {
             function ctx:download_url(url, name) return "data/test.bin" end
             function ctx:send_file(path, caption) end
             function ctx:run_term(cmd) end
-            -- HTTP stubs returning empty but parseable data
             function ctx:http_get(url)   return "" end
             function ctx:http_json_get(url) return {} end
             function ctx:http_request(method, url, body, headers) return "" end
@@ -694,7 +685,7 @@ mod tests {
     async fn module_command_handlers_run_with_mock_ctx() {
         let lua = mlua::Lua::new();
 
-        // Neutralise os.exit so updater/restart handlers don't kill the test runner.
+        // Prevent updater and restart handlers from terminating the test process.
         let os: mlua::Table = lua.globals().get("os").unwrap();
         os.set(
             "exit",
@@ -702,12 +693,11 @@ mod tests {
         )
         .unwrap();
 
-        // Commands that spawn real side-effects we cannot safely mock in-process.
+        // These commands start external processes that cannot be isolated in this test.
         let skip: std::collections::HashSet<&str> = ["term", "restart"].iter().copied().collect();
 
-        // Per-command test arguments; commands not listed get ["", "test"].
         let args_map: std::collections::HashMap<&str, Vec<&str>> = [
-            ("type", vec!["", "hello", "привет мир"]),
+            ("type", vec!["", "hello", "hello world"]),
             ("scroll", vec!["", "hello"]),
             ("magic", vec!["", "test"]),
             ("heart", vec!["", "love u"]),

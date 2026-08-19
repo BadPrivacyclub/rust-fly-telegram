@@ -1,5 +1,3 @@
--- Core module: runtime checks.
-
 local M = {}
 
 M.meta = { name = "core", version = "1.2" }

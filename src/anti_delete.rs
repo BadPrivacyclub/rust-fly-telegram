@@ -24,7 +24,6 @@ const MAX_DELETE_LOG_LIMIT: i64 = 500;
 
 static SQLITE_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 
-/// Describes the account that observed a deleted message.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccountSnapshot {
     pub id: String,
@@ -32,7 +31,6 @@ pub struct AccountSnapshot {
     pub session_file: String,
 }
 
-/// Describes a Telegram chat for anti-delete grouping.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatSnapshot {
     pub id: String,
@@ -43,7 +41,6 @@ pub struct ChatSnapshot {
     pub avatar_path: Option<String>,
 }
 
-/// Stores the message data needed when Telegram later reports deletion.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedDeletedMessage {
     pub account: AccountSnapshot,
@@ -59,7 +56,6 @@ pub struct CachedDeletedMessage {
     pub media_size: Option<i64>,
 }
 
-/// Filters used by the dashboard delete-log view.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct DeleteLogFilters {
     pub q: Option<String>,
@@ -69,7 +65,6 @@ pub struct DeleteLogFilters {
     pub limit: Option<i64>,
 }
 
-/// Returns the full anti-delete store for the dashboard.
 pub async fn store(db: &Database) -> Value {
     let password = db.master_password().await;
     read_store(password)
@@ -77,7 +72,6 @@ pub async fn store(db: &Database) -> Value {
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
-/// Returns a flat, filtered delete log for the dashboard.
 pub async fn delete_log(db: &Database, filters: DeleteLogFilters) -> Value {
     let password = db.master_password().await;
     read_delete_log(password, filters)
@@ -85,7 +79,6 @@ pub async fn delete_log(db: &Database, filters: DeleteLogFilters) -> Value {
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
-/// Creates a cache snapshot from an incoming message.
 pub async fn snapshot_message(
     client: &Client,
     account: &AccountSnapshot,
@@ -112,7 +105,6 @@ pub async fn snapshot_message(
     }
 }
 
-/// Persists a deleted message under its account and chat.
 pub async fn record_deleted_message(
     db: &Database,
     cached: &CachedDeletedMessage,
@@ -135,7 +127,6 @@ pub async fn record_deleted_message(
     seal_database_file(password.as_deref()).await
 }
 
-/// Rewrites the anti-delete store when the master password changes.
 pub async fn rewrap_storage(
     current_password: Option<&str>,
     next_password: Option<&str>,
@@ -151,7 +142,6 @@ pub async fn rewrap_storage(
     }
 }
 
-/// Creates an account snapshot for anti-delete storage.
 pub async fn account_snapshot(
     client: &Client,
     session_file: &str,

@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 
 use crate::crypto;
 
-/// Persistent JSON key-value store. Thread-safe via RwLock.
 pub struct Database {
     path: PathBuf,
     master_password: Arc<RwLock<Option<String>>>,
@@ -17,13 +16,11 @@ pub struct Database {
 }
 
 impl Database {
-    /// Loads the database from disk, creating an empty one if the file does not exist.
     #[allow(dead_code)]
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
         Self::load_with_password(path, None).await
     }
 
-    /// Loads the database, using encrypted storage when a password is provided.
     #[allow(dead_code)]
     pub async fn load_with_password(
         path: impl AsRef<Path>,
@@ -33,7 +30,6 @@ impl Database {
         Self::load_with_state(path, master_password).await
     }
 
-    /// Loads the database with a shared encryption password state.
     pub async fn load_with_state(
         path: impl AsRef<Path>,
         master_password: Arc<RwLock<Option<String>>>,
@@ -70,7 +66,6 @@ impl Database {
         })
     }
 
-    /// Returns a clone of the value at `key`, or `Value::Null` if absent.
     pub async fn get(&self, key: &str) -> Value {
         self.data
             .read()
@@ -80,7 +75,6 @@ impl Database {
             .unwrap_or(Value::Null)
     }
 
-    /// Sets `key` to `value` and flushes to disk.
     pub async fn set(&self, key: impl Into<String>, value: Value) -> Result<()> {
         let key = key.into();
         let mut data = self.data.write().await;
@@ -92,7 +86,6 @@ impl Database {
         self.flush().await
     }
 
-    /// Checks a comma-separated string setting using the cache built on load/update.
     pub async fn csv_contains(&self, key: &str, needle: &str) -> bool {
         self.csv_values
             .read()
@@ -101,7 +94,6 @@ impl Database {
             .is_some_and(|values| values.contains(needle))
     }
 
-    /// Removes `key` and flushes to disk.
     #[allow(dead_code)]
     pub async fn remove(&self, key: &str) -> Result<()> {
         let mut data = self.data.write().await;
@@ -113,28 +105,20 @@ impl Database {
         self.flush().await
     }
 
-    /// Updates the shared master password and rewrites the database.
     pub async fn set_master_password(&self, password: Option<String>) -> Result<()> {
         *self.master_password.write().await = password;
         self.flush().await
     }
 
-    /// Returns true when encrypted storage is active.
     pub async fn encryption_enabled(&self) -> bool {
         self.master_password.read().await.is_some()
     }
 
-    /// Returns the current master password used for encrypted side stores.
     pub async fn master_password(&self) -> Option<String> {
         self.master_password.read().await.clone()
     }
 
-    /// Writes the in-memory map to disk atomically via a temp file + rename.
-    ///
-    /// A plain `write` leaves a window where a crash produces a truncated file.
-    /// Writing to a sibling temp file and renaming replaces the file in one
-    /// filesystem operation, so readers always see either the old or the new
-    /// complete JSON.
+    /// Writes through a sibling file so readers cannot observe a partial document.
     async fn flush(&self) -> Result<()> {
         let serialized = {
             let guard = self.data.read().await;
@@ -311,7 +295,6 @@ mod tests {
             .await
             .expect("test value should be persisted");
 
-        // Reload from the same path; data must survive.
         let db2 = Database::load(&path)
             .await
             .expect("test database should reload from the same path");
@@ -326,7 +309,6 @@ mod tests {
             .await
             .expect("test value should be persisted");
 
-        // The `.json.tmp` sibling must be gone after a successful flush.
         let tmp = path.with_extension("json.tmp");
         assert!(!tmp.exists(), ".json.tmp should not exist after flush");
         let _ = tokio::fs::remove_file(&path).await;

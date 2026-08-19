@@ -18,10 +18,6 @@ use crate::telegram;
 
 const MESSAGE_CACHE_LIMIT: usize = 1000;
 
-/// Connects to Telegram and runs the main userbot update loop.
-///
-/// `use_web` — if true, opens the axum login page instead of CLI prompts
-/// when no valid session exists.
 pub async fn run(
     db: Arc<Database>,
     loader: Arc<Loader>,
@@ -66,7 +62,6 @@ pub async fn run(
     Ok(())
 }
 
-/// Starts an update loop for an existing session file.
 pub fn spawn_session(
     db: Arc<Database>,
     loader: Arc<Loader>,

@@ -126,12 +126,9 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Inline bot runs as a background task so it never races with the userbot
-    // in tokio::select!. If the token is absent it exits immediately (Ok),
-    // leaving the userbot unaffected.
+    // Keep the optional bot outside the userbot's shutdown path.
     tokio::spawn(bot::run(Arc::clone(&db)));
 
-    // Block until the userbot exits (Ctrl-C or fatal error).
     let run_result = client::run(
         Arc::clone(&db),
         Arc::clone(&loader),

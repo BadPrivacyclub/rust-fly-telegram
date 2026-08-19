@@ -22,16 +22,13 @@ use crate::{config, crypto, telegram};
 use context::Ctx;
 use manifest::{ModuleInfo, ModuleManifest};
 
-/// A loaded Lua module and its registered command → handler mappings.
 struct Module {
     table: Table,
-    /// Command name (without prefix) → handler function name in the table.
     commands: HashMap<String, String>,
     manifest: ModuleManifest,
     source: String,
 }
 
-/// Manages loading, unloading, and dispatching to Lua modules.
 pub struct Loader {
     lua: Arc<Lua>,
     db: Arc<Database>,
@@ -42,7 +39,6 @@ pub struct Loader {
 }
 
 impl Loader {
-    /// Creates a loader bound to the module directory.
     pub async fn new(
         db: Arc<Database>,
         runtime: Arc<RuntimeState>,
@@ -63,7 +59,6 @@ impl Loader {
         })
     }
 
-    /// Loads all `.lua` files from the module directory.
     pub async fn load_all(&self) -> Result<()> {
         let abs = self
             .modules_dir
@@ -93,7 +88,6 @@ impl Loader {
         Ok(())
     }
 
-    /// Loads a single Lua file as a module.
     pub async fn load_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let name = path
@@ -146,7 +140,6 @@ impl Loader {
         Ok(())
     }
 
-    /// Unloads a module by name.
     pub async fn unload(&self, name: &str) -> bool {
         let removed = self.modules.write().await.remove(name).is_some();
         if removed {
@@ -157,7 +150,6 @@ impl Loader {
         removed
     }
 
-    /// Dispatches an incoming message to the matching command handler.
     pub async fn handle_message(
         &self,
         client: Client,
@@ -170,7 +162,6 @@ impl Loader {
 
         let text = msg.text().to_string();
 
-        // Command prefix is `.`.
         let Some(body) = text.strip_prefix('.') else {
             return Ok(());
         };
@@ -221,7 +212,6 @@ impl Loader {
         Ok(())
     }
 
-    /// Returns loaded module names for dashboard display.
     pub async fn module_names(&self) -> Vec<String> {
         let mut names = self
             .modules
@@ -234,7 +224,6 @@ impl Loader {
         names
     }
 
-    /// Returns dashboard-ready module metadata.
     pub async fn module_info(&self) -> Vec<ModuleInfo> {
         let mut modules = self
             .modules
@@ -309,54 +298,53 @@ async fn is_own_command_message(
 const BUILTIN_HELP: &str = r#"**✈️ fly-telegram**
 
 **▸ Core**
-`.ping` — connectivity check
-`.help` — this message
-`.eval <code>` — evaluate Lua expression
-`.term <cmd>` — run a shell command
+`.ping`: connectivity check
+`.help`: this message
+`.eval <code>`: evaluate Lua expression
+`.term <cmd>`: run a shell command
 
 **▸ Messaging**
-`.note set|get|clear` — saved note
-`.alias set|get|del` — text aliases
-`.del <n>` — delete last N messages
-`.sd <sec> <text>` — self-destruct message
+`.note set|get|clear`: saved note
+`.alias set|get|del`: text aliases
+`.del <n>`: delete last N messages
+`.sd <sec> <text>`: self-destruct message
 
 **▸ Modules**
-`.install <path-or-url> [name]` — install from file or URL
-`.install` _(reply to .lua)_ — install replied module
-`.market search|info|install` — module marketplace
+`.install <path-or-url> [name]`: install from file or URL
+`.install` _(reply to .lua)_: install replied module
+`.market search|info|install`: module marketplace
 
 **▸ Info & OSINT**
-`.info` — chat / user / DC / group info
-`.ip <ip>` · `.domain <d>` · `.rdap <d>` — OSINT lookups
-`.ytdl <url>` — run yt-dlp
+`.info`: chat / user / DC / group info
+`.ip <ip>` · `.domain <d>` · `.rdap <d>`: OSINT lookups
+`.ytdl <url>`: run yt-dlp
 
 **▸ Files**
 `.dl` · `.sendfile` · `.urlupload` · `.rename`
 
 **▸ AI**
-`.ai provider <name>` — set active AI provider
+`.ai provider <name>`: set active AI provider
 `.ask` · `.summarize` · `.translate` · `.transcribe`
 
 **▸ Automation**
-`.afk on [text]|off` — away mode with auto-reply
-`.autoread on|off` — mark incoming messages as read
-`.antidelete on|off` — log deleted cached messages
-`.pmguard on|off|status` — private message guard
+`.afk on [text]|off`: away mode with auto-reply
+`.autoread on|off`: mark incoming messages as read
+`.antidelete on|off`: log deleted cached messages
+`.pmguard on|off|status`: private message guard
 
 **▸ Groups**
-`.cleanjoins on|off|status` — remove join messages
-`.captcha on|off|status` — join captcha
+`.cleanjoins on|off|status`: remove join messages
+`.captcha on|off|status`: join captcha
 
 **▸ Music** _(external worker)_
 `.play <query>` · `.queue` · `.skip` · `.stop`
 
 **▸ Fun**
-`.type` · `.scroll` · `.magic` · `.heart [text]` — text animations
-`.gifts` · `.taskbot` — dry-run hooks
+`.type` · `.scroll` · `.magic` · `.heart [text]`: text animations
+`.gifts` · `.taskbot`: dry-run hooks
 
 _Modules are saved to_ `modules/` _and hot-reloaded on save._"#;
 
-/// Reads `module.commands = { cmd = "handler_fn" }` from a module table.
 fn collect_commands(table: &Table) -> Result<HashMap<String, String>> {
     let Ok(cmds_table) = table.get::<Table>("commands") else {
         return Ok(HashMap::new());

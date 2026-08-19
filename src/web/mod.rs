@@ -25,14 +25,10 @@ struct AppState {
     db: Arc<Database>,
     loader: Option<Arc<Loader>>,
     runtime: Option<Arc<RuntimeState>>,
-    /// Holds a live Telegram connection and login token between the two web requests.
     pending: Arc<Mutex<Option<PendingAuth>>>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
-/// Starts the web authorization server.
-///
-/// Returns once the user completes sign-in, writing the authorized session to disk.
 pub async fn run_until_authorized(db: Arc<Database>) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -63,7 +59,6 @@ pub async fn run_until_authorized(db: Arc<Database>) -> Result<()> {
     Ok(())
 }
 
-/// Starts the local runtime dashboard.
 pub async fn run_dashboard(
     db: Arc<Database>,
     loader: Arc<Loader>,
@@ -107,8 +102,6 @@ async fn index_handler() -> Html<&'static str> {
 async fn dashboard_handler() -> Html<&'static str> {
     Html(include_str!("dashboard.html"))
 }
-
-// ── Request / response types ─────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct SendCodeRequest {
@@ -164,10 +157,8 @@ struct ApiResponse {
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    /// True when 2FA is required after submitting the code.
     #[serde(skip_serializing_if = "Option::is_none")]
     need_password: Option<bool>,
-    /// 2FA hint text shown to the user.
     #[serde(skip_serializing_if = "Option::is_none")]
     password_hint: Option<String>,
 }
@@ -202,9 +193,6 @@ fn json_response<T: Serialize>(value: T) -> (StatusCode, Json<serde_json::Value>
     }
 }
 
-// ── Handlers ─────────────────────────────────────────────────────────────────
-
-/// Saves credentials, connects to Telegram, and sends the login code.
 async fn send_code_handler(
     State(state): State<AppState>,
     Json(body): Json<SendCodeRequest>,
@@ -219,7 +207,7 @@ async fn send_code_handler(
         }
     };
 
-    // Persist credentials for auth.rs to use on next launch (avoids re-entering them).
+    // Persist credentials so subsequent authorization attempts can reuse them.
     let proxy_url = body.proxy_url.trim().to_string();
     if !proxy_url.is_empty() && !proxy_url.starts_with(SOCKS5_SCHEME) {
         return (
@@ -302,7 +290,6 @@ fn session_file_from_name(name: &str) -> String {
     format!("{SESSIONS_DIR}/{safe_name}.session")
 }
 
-/// Submits the login code (and optional 2FA password) to Telegram.
 async fn sign_in_handler(
     State(state): State<AppState>,
     Json(body): Json<SignInRequest>,
@@ -335,14 +322,13 @@ async fn sign_in_handler(
                 );
             }
 
-            // Shut down the web server — authorization is complete.
             if let Some(tx) = state.shutdown_tx.lock().await.take() {
                 let _ = tx.send(());
             }
             (StatusCode::OK, Json(ApiResponse::ok()))
         }
         Err(crate::client::auth::SignInOutcome::NeedPassword { hint, pending }) => {
-            // Give back the pending state so the user can retry with the password.
+            // Restore the moved login token so the password retry can reuse it.
             *state.pending.lock().await = Some(pending);
             (
                 StatusCode::OK,
@@ -482,8 +468,6 @@ async fn optional_db_string(db: &Database, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

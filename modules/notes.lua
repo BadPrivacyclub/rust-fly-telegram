@@ -1,5 +1,3 @@
--- Notes module.
-
 local M = {}
 
 M.meta = { name = "notes", version = "1.0" }

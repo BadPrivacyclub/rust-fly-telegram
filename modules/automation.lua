@@ -1,5 +1,3 @@
--- Automation for Telegram gifts and task-specific marketplace hooks.
-
 local M = {}
 
 M.meta = { name = "automation", version = "1.0" }

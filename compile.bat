@@ -6,7 +6,6 @@ echo   fly-telegram ^| Windows build script
 echo ========================================
 echo.
 
-:: --- Check Rust / Cargo ---
 where cargo >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Rust is not installed or not in PATH.
@@ -23,11 +22,10 @@ if errorlevel 1 (
 for /f "tokens=*" %%v in ('cargo --version 2^>^&1') do set CARGO_VER=%%v
 echo [OK] Found %CARGO_VER%
 
-:: --- Check C compiler (MSVC via cl.exe) ---
 where cl >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo [WARNING] cl.exe - MSVC C compiler - not found in PATH.
+    echo [WARNING] cl.exe, the MSVC C compiler, was not found in PATH.
     echo Lua 5.4 requires a C compiler to build.
     echo.
     echo To fix this, open this terminal from:
@@ -48,10 +46,9 @@ if not errorlevel 1 (
     for /f "tokens=*" %%v in ('cl 2^>^&1 ^| findstr /i "version"') do echo [OK] C compiler: %%v
 )
 
-:: --- Check Git (optional, for version info) ---
 where git >nul 2>&1
 if errorlevel 1 (
-    echo [INFO] Git not found - skipping version check
+    echo [INFO] Git not found, skipping version check
 ) else (
     for /f "tokens=*" %%v in ('git --version 2^>^&1') do echo [OK] %%v
 )

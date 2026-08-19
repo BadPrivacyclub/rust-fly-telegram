@@ -1,5 +1,3 @@
--- Handlers module: controls event-based userbot features.
-
 local M = {}
 
 M.meta = { name = "handlers", version = "1.0" }

@@ -1,5 +1,3 @@
--- Everyday utility commands.
-
 local M = {}
 
 M.meta = { name = "tools", version = "1.0" }

@@ -1,5 +1,3 @@
--- Music worker client. Requires an external worker exposing a local JSON API.
-
 local M = {}
 
 M.meta = { name = "music", version = "0.1" }

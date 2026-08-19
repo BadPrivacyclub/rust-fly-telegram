@@ -13,7 +13,6 @@ struct CpuSample {
     process_time: Duration,
 }
 
-/// Runtime information for one connected Telegram account.
 #[derive(Clone, Serialize)]
 pub struct AccountRuntime {
     pub session_file: String,
@@ -32,7 +31,6 @@ struct AccountRuntimeEntry {
     commands_seen: u64,
 }
 
-/// Runtime metrics shown in the local dashboard.
 pub struct RuntimeState {
     started_at: Instant,
     connected: AtomicBool,
@@ -45,7 +43,6 @@ pub struct RuntimeState {
 }
 
 impl RuntimeState {
-    /// Creates an empty runtime metrics state.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -67,13 +64,11 @@ impl Default for RuntimeState {
 }
 
 impl RuntimeState {
-    /// Marks the userbot connection as active.
     pub async fn set_connected(&self, account_name: Option<String>) {
         self.connected.store(true, Ordering::Relaxed);
         *self.account_name.write().await = account_name;
     }
 
-    /// Marks one Telegram account as connected.
     pub async fn set_account_connected(
         &self,
         session_file: String,
@@ -94,12 +89,10 @@ impl RuntimeState {
         self.connected.store(true, Ordering::Relaxed);
     }
 
-    /// Records one incoming update.
     pub fn record_update(&self) {
         self.updates_seen.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Records one incoming update for a specific account.
     pub async fn record_account_update(&self, session_file: &str) {
         self.record_update();
         if let Some(account) = self.accounts.write().await.get_mut(session_file) {
@@ -107,12 +100,10 @@ impl RuntimeState {
         }
     }
 
-    /// Records one command dispatch attempt.
     pub fn record_command(&self) {
         self.commands_seen.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Records one command dispatch attempt for a specific account.
     pub async fn record_account_command(&self, session_file: &str) {
         self.record_command();
         if let Some(account) = self.accounts.write().await.get_mut(session_file) {
@@ -120,32 +111,26 @@ impl RuntimeState {
         }
     }
 
-    /// Returns uptime in whole seconds.
     pub fn uptime_seconds(&self) -> u64 {
         self.started_at.elapsed().as_secs()
     }
 
-    /// Returns whether the userbot is connected.
     pub fn connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
     }
 
-    /// Returns the number of updates seen by the userbot.
     pub fn updates_seen(&self) -> u64 {
         self.updates_seen.load(Ordering::Relaxed)
     }
 
-    /// Returns the number of command messages seen by the dispatcher.
     pub fn commands_seen(&self) -> u64 {
         self.commands_seen.load(Ordering::Relaxed)
     }
 
-    /// Returns the connected account display name, if known.
     pub async fn account_name(&self) -> Option<String> {
         self.account_name.read().await.clone()
     }
 
-    /// Returns all known account runtime entries.
     pub async fn accounts(&self) -> Vec<AccountRuntime> {
         let mut accounts = self
             .accounts
@@ -165,7 +150,6 @@ impl RuntimeState {
         accounts
     }
 
-    /// Returns current process CPU usage percent when the platform supports it.
     pub async fn process_cpu_percent(&self) -> Option<f64> {
         let process_time = process_cpu_time()?;
         let mut sample = self.cpu_sample.lock().await;
@@ -188,7 +172,6 @@ impl RuntimeState {
         Some((cpu_time.as_secs_f64() / elapsed / cpu_count) * 100.0)
     }
 
-    /// Serializes outgoing Telegram calls to reduce flood-wait risk.
     pub async fn wait_for_telegram_send(&self) {
         let mut next_send_at = self.telegram_send_at.lock().await;
         let now = Instant::now();

@@ -1,5 +1,3 @@
--- PM security controls.
-
 local M = {}
 
 M.meta = { name = "pmguard", version = "1.0" }

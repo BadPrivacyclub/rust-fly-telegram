@@ -1,5 +1,3 @@
--- Updater module: restarts and updates the userbot process.
-
 local M = {}
 
 M.meta = { name = "updater", version = "1.1" }
