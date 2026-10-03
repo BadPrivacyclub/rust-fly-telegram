@@ -1,0 +1,8 @@
+{
+  "name": "backup",
+  "version": "1.0.0",
+  "description": "Backs up settings, database, and modules to Saved Messages and restores them.",
+  "commands": ["backup", "restore"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "updater",
+  "version": "2.0.0",
+  "description": "Restarts the process in place and updates from git or GitHub Releases.",
+  "commands": ["restart", "update"],
+  "permissions": ["shell", "core.admin"],
+  "trusted": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "installer",
+  "version": "2.0.0",
+  "description": "Installs Lua modules from files, URLs, or replied documents.",
+  "commands": ["install"],
+  "permissions": ["modules.install"],
+  "trusted": true
+}

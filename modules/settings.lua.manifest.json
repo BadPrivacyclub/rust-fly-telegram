@@ -1,0 +1,8 @@
+{
+  "name": "settings",
+  "version": "1.0.0",
+  "description": "Prefixes, language, module management, module settings, sudo users, and web panel access.",
+  "commands": ["prefix", "lang", "modules", "module", "cfg", "sudo", "panel"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

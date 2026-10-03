@@ -1,0 +1,8 @@
+{
+  "name": "account",
+  "version": "1.0.0",
+  "description": "Account tools: smart cleanup, bulk actions, profile, background tasks.",
+  "commands": ["acc", "cleanup", "readall", "archive", "muteall", "export", "jobs", "profile"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

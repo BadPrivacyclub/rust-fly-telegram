@@ -1,0 +1,8 @@
+{
+  "name": "aliases",
+  "version": "2.0.0",
+  "description": "Text snippets you can paste anywhere.",
+  "commands": ["alias"],
+  "permissions": [],
+  "trusted": true
+}

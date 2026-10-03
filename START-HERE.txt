@@ -1,0 +1,40 @@
+fly-telegram: quick start
+=========================
+
+1. Start the program
+   Windows: double-click fly-telegram.exe
+   macOS / Linux: open a terminal in this folder and run ./fly-telegram
+
+2. The setup wizard opens in your browser (http://127.0.0.1:8080).
+   Follow the steps: panel password, optional control bot, Telegram API keys
+   from https://my.telegram.org/apps, then your phone number and login code.
+
+3. Send .help in any Telegram chat.
+
+Your data (settings, session, modules) is stored in this folder.
+Keep it private: anyone with your session file can use your account.
+
+Useful commands:
+  fly-telegram doctor            check your setup
+  fly-telegram service install   start automatically in the background
+
+
+fly-telegram: быстрый старт
+===========================
+
+1. Запустите программу
+   Windows: дважды щёлкните fly-telegram.exe
+   macOS / Linux: откройте терминал в этой папке и выполните ./fly-telegram
+
+2. В браузере откроется мастер настройки (http://127.0.0.1:8080).
+   Пройдите шаги: пароль панели, бот (необязательно), API-ключи Telegram
+   с https://my.telegram.org/apps, затем номер телефона и код входа.
+
+3. Отправьте .help в любом чате Telegram.
+
+Ваши данные (настройки, сессия, модули) хранятся в этой папке.
+Никому её не передавайте: с файлом сессии можно войти в ваш аккаунт.
+
+Полезные команды:
+  fly-telegram doctor            проверка настройки
+  fly-telegram service install   автозапуск в фоне

@@ -1,0 +1,8 @@
+{
+  "name": "pmguard",
+  "version": "2.0.0",
+  "description": "Private message guard with approve and block commands.",
+  "commands": ["pmguard", "approve", "block"],
+  "permissions": [],
+  "trusted": true
+}

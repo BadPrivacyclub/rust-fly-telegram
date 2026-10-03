@@ -1,0 +1,8 @@
+{
+  "name": "auto",
+  "version": "1.0.0",
+  "description": "Automation rules: schedules, away replies, profile clock, presence.",
+  "commands": ["auto", "away"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

@@ -1,0 +1,1571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fly-telegram · Panel</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <style>
+    .module-card { display: flex; flex-direction: column; gap: 10px; }
+    .module-card .desc { color: var(--text-muted); margin: 0; min-height: 21px; }
+    .module-card.off { opacity: 0.62; }
+    .module-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+    .log-box { max-height: calc(100vh - 230px); overflow: auto; }
+    .msg-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--bg-elev); }
+    .msg-text { white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+    .msg-media img, .msg-media video { max-height: 260px; max-width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-row .label { font-weight: 560; }
+    .setting-row .hint { color: var(--text-faint); font-size: 12px; }
+    .acct { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .acct:last-child { border-bottom: 0; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; flex: none; }
+    .bar-row { display: grid; grid-template-columns: 110px 1fr 40px; gap: 10px; align-items: center; font-size: 12.5px; }
+    .bar-track { height: 8px; border-radius: 6px; background: var(--bg-sunken); overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 6px; }
+    .perm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .perm-grid label { display: flex; gap: 8px; align-items: center; }
+    @media (max-width: 820px) { .perm-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="topbar-mobile">
+    <button class="btn btn-ghost btn-sm" id="menu-toggle" aria-label="Menu">☰</button>
+    <div class="brand" style="padding:0"><div class="brand-logo">✈</div>fly-telegram</div>
+    <span></span>
+  </div>
+
+  <div class="app">
+    <nav class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-logo">✈</div>
+        <div>fly-telegram<small id="version">v—</small></div>
+      </div>
+      <button class="nav-item" data-page="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span data-i18n="Overview">Overview</span></button>
+      <button class="nav-item" data-page="accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.5 5.2"/></svg><span data-i18n="Accounts">Accounts</span></button>
+      <button class="nav-item" data-page="automations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span data-i18n="Automations">Automations</span></button>
+      <button class="nav-item" data-page="tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span data-i18n="Tasks">Tasks</span><span class="nav-badge hidden" id="tasks-badge">0</span></button>
+      <button class="nav-item" data-page="modules"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n="Modules">Modules</span></button>
+      <button class="nav-item" data-page="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span data-i18n="Logs">Logs</span></button>
+      <button class="nav-item" data-page="antidelete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span data-i18n="Anti-delete">Anti-delete</span></button>
+      <button class="nav-item" data-page="backups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg><span data-i18n="Backups">Backups</span></button>
+      <button class="nav-item" data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span data-i18n="Settings">Settings</span></button>
+
+      <div class="sidebar-footer">
+        <div class="row small muted" id="bot-status"></div>
+        <div class="row between">
+          <div class="tabs">
+            <button class="tab" data-lang="en" type="button">EN</button>
+            <button class="tab" data-lang="ru" type="button">RU</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="theme" type="button" title="Appearance">🎨</button>
+        </div>
+        <button class="btn btn-sm" id="open-palette" type="button"><span data-i18n="Quick actions">Quick actions</span> <span class="kbd">Ctrl K</span></button>
+        <button class="btn btn-sm" id="logout" type="button" data-i18n="Sign out">Sign out</button>
+      </div>
+    </nav>
+
+    <main class="main">
+      <!-- Overview -->
+      <section class="page" id="page-overview">
+        <div class="page-head">
+          <div>
+            <h1 data-i18n="Overview">Overview</h1>
+            <p id="overview-sub"></p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btn-restart" data-i18n="Restart">Restart</button>
+          </div>
+        </div>
+        <div class="card hidden" id="checklist-card" style="margin-bottom:16px">
+          <div class="card-head">
+            <div><h2>🚀 <span data-i18n="Getting started">Getting started</span></h2><p id="checklist-progress"></p></div>
+            <button class="btn btn-ghost btn-sm" id="checklist-hide" data-i18n="Hide">Hide</button>
+          </div>
+          <div class="checklist" id="checklist"></div>
+        </div>
+        <div class="grid grid-4">
+          <div class="card hover-lift"><div class="stat-head"><div class="stat-label" data-i18n="Uptime">Uptime</div><div class="stat-icon tint-1">⏱</div></div><div class="stat-value" id="stat-uptime">—</div><div class="stat-sub" id="stat-conn"></div></div>
+          <div class="card hover-lift"><div class="stat-head"><div class="stat-label" data-i18n="Commands">Commands</div><div class="stat-icon tint-2">⌨</div></div><div class="stat-value" id="stat-commands">—</div><div class="stat-sub" id="stat-errors"></div></div>
+          <div class="card hover-lift"><div class="stat-head"><div class="stat-label" data-i18n="Updates">Updates</div><div class="stat-icon tint-4">📨</div></div><div class="stat-value" id="stat-updates">—</div><div class="stat-sub" id="stat-modules"></div></div>
+          <div class="card hover-lift"><div class="stat-head"><div class="stat-label" data-i18n="Memory">Memory</div><div class="stat-icon tint-3">💾</div></div><div class="stat-value" id="stat-memory">—</div><div class="stat-sub" id="stat-cpu"></div></div>
+        </div>
+        <div id="alerts" class="stack" style="margin-top:16px"></div>
+        <div class="grid grid-3" style="margin-top:16px">
+          <div class="card" style="grid-column: span 2">
+            <div class="card-head">
+              <div><h2 data-i18n="Activity">Activity</h2><p data-i18n="Last 60 minutes">Last 60 minutes</p></div>
+              <div class="legend"><span><i style="background:var(--accent)"></i><span data-i18n="Updates">Updates</span></span><span><i style="background:var(--success)"></i><span data-i18n="Commands">Commands</span></span></div>
+            </div>
+            <svg class="chart" id="chart" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label="Activity chart"></svg>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Top commands">Top commands</h2></div>
+            <div id="top-commands" class="stack"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head">
+            <h2 data-i18n="Accounts">Accounts</h2>
+            <a class="btn btn-sm" href="/account">＋ <span data-i18n="Add account">Add account</span></a>
+          </div>
+          <div id="accounts"></div>
+        </div>
+      </section>
+
+      <!-- Accounts -->
+      <section class="page hidden" id="page-accounts">
+        <div class="page-head">
+          <div><h1 data-i18n="Accounts">Accounts</h1><p data-i18n="Select one or several accounts, then pick an action.">Select one or several accounts, then pick an action.</p></div>
+          <div class="row">
+            <button class="btn" id="acc-select-all" data-i18n="Select all">Select all</button>
+            <a class="btn btn-primary" href="/account">＋ <span data-i18n="Add account">Add account</span></a>
+          </div>
+        </div>
+        <div class="card toolbar sticky" style="margin-bottom:16px">
+          <b id="acc-selected-label"></b>
+          <button class="btn btn-sm" data-bulk="read_all">✅ <span data-i18n="Read all">Read all</span></button>
+          <button class="btn btn-sm" data-bulk="archive_inactive">📦 <span data-i18n="Archive inactive">Archive inactive</span></button>
+          <button class="btn btn-sm" data-bulk="mute_all">🔕 <span data-i18n="Mute all">Mute all</span></button>
+          <button class="btn btn-sm" data-bulk="export">💾 <span data-i18n="Export">Export</span></button>
+          <button class="btn btn-sm btn-danger" id="open-cleanup">🧹 <span data-i18n="Smart cleanup">Smart cleanup</span></button>
+        </div>
+        <div class="grid grid-3" id="acc-grid"></div>
+      </section>
+
+      <!-- Automations -->
+      <section class="page hidden" id="page-automations">
+        <div class="page-head">
+          <div><h1 data-i18n="Automations">Automations</h1><p data-i18n="Rules run in the background for the accounts you choose.">Rules run in the background for the accounts you choose.</p></div>
+          <button class="btn btn-primary" id="new-rule">＋ <span data-i18n="New rule">New rule</span></button>
+        </div>
+        <div class="stack" id="rule-list"></div>
+      </section>
+
+      <!-- Tasks -->
+      <section class="page hidden" id="page-tasks">
+        <div class="page-head">
+          <div><h1 data-i18n="Tasks">Tasks</h1><p data-i18n="Background operations: cleanup and bulk actions.">Background operations: cleanup and bulk actions.</p></div>
+        </div>
+        <div class="stack" id="job-list"></div>
+      </section>
+
+      <!-- Modules -->
+      <section class="page hidden" id="page-modules">
+        <div class="page-head">
+          <div><h1 data-i18n="Modules">Modules</h1><p id="modules-sub"></p></div>
+          <div class="row">
+            <input class="input" id="module-search" data-i18n-placeholder="Search modules" placeholder="Search modules" style="width:220px">
+            <div class="tabs" id="module-filter">
+              <button class="tab active" data-filter="all" data-i18n="All">All</button>
+              <button class="tab" data-filter="on" data-i18n="Enabled">Enabled</button>
+              <button class="tab" data-filter="off" data-i18n="Disabled">Disabled</button>
+              <button class="tab" data-filter="sandbox" data-i18n="Sandboxed">Sandboxed</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <form id="install-form" class="row" autocomplete="off">
+            <strong data-i18n="Install module">Install module</strong>
+            <input class="input" id="install-url" style="flex:1;min-width:220px" placeholder="https://…/module.lua" data-i18n-placeholder="Module URL">
+            <button class="btn btn-primary" type="submit" data-i18n="Install">Install</button>
+          </form>
+          <p class="small faint" style="margin:8px 0 0" data-i18n="Installed modules run in a sandbox without permissions until you grant them.">Installed modules run in a sandbox without permissions until you grant them.</p>
+        </div>
+        <div class="grid grid-3" id="module-grid"></div>
+      </section>
+
+      <!-- Logs -->
+      <section class="page hidden" id="page-logs">
+        <div class="page-head">
+          <div><h1 data-i18n="Logs">Logs</h1></div>
+          <div class="row">
+            <select class="input" id="log-level" style="width:140px">
+              <option value="" data-i18n="All levels">All levels</option>
+              <option value="INFO">INFO+</option>
+              <option value="WARN">WARN+</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+            <label class="row small"><span class="switch"><input type="checkbox" id="log-auto" checked><span></span></span><span data-i18n="Auto-refresh">Auto-refresh</span></label>
+          </div>
+        </div>
+        <div class="card log-box" id="log-box"></div>
+      </section>
+
+      <!-- Anti-delete -->
+      <section class="page hidden" id="page-antidelete">
+        <div class="page-head">
+          <div><h1 data-i18n="Deleted messages">Deleted messages</h1><p id="ad-sub"></p></div>
+          <div class="row">
+            <input class="input" id="ad-q" data-i18n-placeholder="Search" placeholder="Search" style="width:200px">
+            <input class="input" id="ad-chat" data-i18n-placeholder="Chat" placeholder="Chat" style="width:160px">
+            <select class="input" id="ad-media" style="width:150px">
+              <option value="" data-i18n="Any type">Any type</option>
+              <option value="photo">photo</option>
+              <option value="video">video</option>
+              <option value="audio">audio</option>
+              <option value="document">document</option>
+              <option value="sticker">sticker</option>
+            </select>
+          </div>
+        </div>
+        <div id="ad-disabled" class="alert warn hidden" style="margin-bottom:12px" data-i18n="Anti-delete is off. Turn it on in Settings or with .antidelete on">Anti-delete is off. Turn it on in Settings or with .antidelete on</div>
+        <div class="stack" id="ad-list"></div>
+      </section>
+
+      <!-- Backups -->
+      <section class="page hidden" id="page-backups">
+        <div class="page-head"><div><h1 data-i18n="Backups">Backups</h1></div></div>
+        <div class="grid grid-2">
+          <div class="card stack">
+            <h2 data-i18n="Download backup">Download backup</h2>
+            <p class="muted" style="margin:0" data-i18n="Database, settings, and modules. Telegram sessions are never included.">Database, settings, and modules. Telegram sessions are never included.</p>
+            <div id="backup-warning" class="alert warn hidden" data-i18n="The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.">The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.</div>
+            <div><a class="btn btn-primary" href="/api/backup" download data-i18n="Download backup">Download backup</a></div>
+            <p class="small faint" style="margin:0" data-i18n="Tip: .backup in Telegram sends a backup to Saved Messages.">Tip: .backup in Telegram sends a backup to Saved Messages.</p>
+          </div>
+          <div class="card stack">
+            <h2 data-i18n="Restore backup">Restore backup</h2>
+            <p class="muted" style="margin:0" data-i18n="Replaces the database, settings, and modules, then restarts. The current database is kept in backups/.">Replaces the database, settings, and modules, then restarts. The current database is kept in backups/.</p>
+            <input type="file" id="restore-file" accept=".gz,.tgz,application/gzip" class="input">
+            <div><button class="btn btn-danger" id="restore-btn" data-i18n="Restore and restart">Restore and restart</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section class="page hidden" id="page-settings">
+        <div class="page-head"><div><h1 data-i18n="Settings">Settings</h1></div></div>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="General">General</h2></div>
+            <div class="stack">
+              <div class="field">
+                <label for="set-prefixes" data-i18n="Command prefixes">Command prefixes</label>
+                <input class="input mono" id="set-prefixes">
+                <span class="hint" data-i18n="Separate several prefixes with spaces">Separate several prefixes with spaces</span>
+              </div>
+              <div class="field">
+                <label for="set-language" data-i18n="Bot and message language">Bot and message language</label>
+                <select class="input" id="set-language"><option value="en">English</option><option value="ru">Русский</option></select>
+              </div>
+              <div class="field">
+                <label for="set-sudo" data-i18n="Sudo users">Sudo users</label>
+                <input class="input mono" id="set-sudo" placeholder="123456789 987654321">
+                <span class="hint" data-i18n="Telegram user IDs allowed to run safe commands">Telegram user IDs allowed to run safe commands</span>
+              </div>
+              <div><button class="btn btn-primary" id="save-general" data-i18n="Save">Save</button></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Control bot">Control bot</h2><span id="bot-badge"></span></div>
+            <div class="stack">
+              <div class="field">
+                <label for="set-bot" data-i18n="Bot token">Bot token</label>
+                <input class="input mono" id="set-bot" placeholder="123456789:AA…" autocomplete="off">
+                <span class="hint" data-i18n="Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.">Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.</span>
+              </div>
+              <div class="row">
+                <button class="btn btn-primary" id="save-bot" data-i18n="Save">Save</button>
+                <button class="btn btn-danger" id="remove-bot" data-i18n="Remove bot">Remove bot</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Handlers">Handlers</h2></div>
+            <div id="toggles-handlers"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Notifications">Notifications</h2></div>
+            <div id="toggles-notifications"></div>
+            <p class="small faint" style="margin:10px 0 0" data-i18n="Notifications are delivered by the control bot.">Notifications are delivered by the control bot.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Security">Security</h2></div>
+            <div class="stack">
+              <div class="field">
+                <label for="set-panel-pw" data-i18n="Panel password">Panel password</label>
+                <input class="input" type="password" id="set-panel-pw" autocomplete="new-password">
+                <span class="hint" id="panel-pw-state"></span>
+              </div>
+              <div class="row">
+                <button class="btn btn-primary" id="save-panel-pw" data-i18n="Save">Save</button>
+                <button class="btn btn-danger" id="clear-panel-pw" data-i18n="Remove password">Remove password</button>
+              </div>
+              <hr style="border:0;border-top:1px solid var(--border);margin:6px 0">
+              <div class="field">
+                <label for="set-master" data-i18n="Master password">Master password</label>
+                <input class="input" type="password" id="set-master" autocomplete="new-password">
+                <span class="hint" id="master-state"></span>
+                <span class="hint" data-i18n="Encrypts the database, the default session, and anti-delete storage on disk. You will need it at every start (or put FLY_MASTER_PASSWORD in fly-telegram.env).">Encrypts the database, the default session, and anti-delete storage on disk. You will need it at every start (or put FLY_MASTER_PASSWORD in fly-telegram.env).</span>
+              </div>
+              <div class="row">
+                <button class="btn btn-primary" id="save-master" data-i18n="Save">Save</button>
+                <button class="btn btn-danger" id="clear-master" data-i18n="Remove encryption">Remove encryption</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Desktop device profiles">Desktop device profiles</h2></div>
+            <div class="stack">
+              <label class="row" style="gap:8px"><input type="checkbox" id="prof-enabled"> <span data-i18n="Give every new account its own generated desktop profile">Give every new account its own generated desktop profile</span></label>
+              <span class="hint" data-i18n="A profile sets the device name, OS and app version an account reports to Telegram. It stays pinned to the account. Applies after a restart.">A profile sets the device name, OS and app version an account reports to Telegram. It stays pinned to the account. Applies after a restart.</span>
+              <div id="prof-list" class="stack"></div>
+              <div class="row">
+                <button class="btn" id="prof-new" data-i18n="New profile">New profile</button>
+                <button class="btn" id="prof-assign-all" data-i18n="Generate for accounts without one">Generate for accounts without one</button>
+              </div>
+              <div id="prof-accounts" class="stack"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Network and updates">Network and updates</h2></div>
+            <div class="stack">
+              <div class="field">
+                <label for="set-proxy">SOCKS5 <span data-i18n="Proxy">Proxy</span> <span class="badge ok hidden" id="tor-badge">Tor</span></label>
+                <input class="input mono" id="set-proxy" placeholder="socks5://127.0.0.1:9050">
+                <span class="hint" data-i18n="Applies to new connections after a restart.">Applies to new connections after a restart.</span>
+                <span class="hint hidden" id="tor-hint" data-i18n="Tor mode: every account uses its own circuit, so accounts leave through different exit IPs.">Tor mode: every account uses its own circuit, so accounts leave through different exit IPs.</span>
+              </div>
+              <div><button class="btn btn-primary" id="save-proxy" data-i18n="Save">Save</button></div>
+              <hr style="border:0;border-top:1px solid var(--border);margin:6px 0">
+              <div class="row between">
+                <div><div class="label" data-i18n="Version">Version</div><div class="small muted" id="update-state">—</div></div>
+                <div class="row">
+                  <button class="btn" id="check-update" data-i18n="Check for updates">Check for updates</button>
+                  <button class="btn btn-primary hidden" id="install-update" data-i18n="Install update">Install update</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modal">
+    <div class="card modal stack">
+      <div class="row between"><h2 id="modal-title"></h2><button class="btn btn-ghost btn-sm" id="modal-close">✕</button></div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/assets/common.js"></script>
+  <script>
+    "use strict";
+    Fly.extend({ ru: {
+      "All": "Все",
+      "Sandboxed": "В песочнице",
+      "Installed modules run in a sandbox without permissions until you grant them.": "Установленные модули работают в песочнице без разрешений, пока вы их не выдадите.",
+      "All levels": "Все уровни",
+      "Any type": "Любой тип",
+      "Anti-delete is off. Turn it on in Settings or with .antidelete on": "Анти-удаление выключено. Включите его в настройках или командой .antidelete on",
+      "Database, settings, and modules. Telegram sessions are never included.": "База данных, настройки и модули. Сессии Telegram никогда не включаются.",
+      "The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.": "База не зашифрована, поэтому в бэкапе API hash и токен бота лежат открытым текстом. Задайте мастер-пароль, чтобы зашифровать её.",
+      "Tip: .backup in Telegram sends a backup to Saved Messages.": "Совет: команда .backup в Telegram отправит бэкап в «Избранное».",
+      "Replaces the database, settings, and modules, then restarts. The current database is kept in backups/.": "Заменяет базу, настройки и модули, затем перезапускает. Текущая база сохраняется в backups/.",
+      "Restore and restart": "Восстановить и перезапустить",
+      "Separate several prefixes with spaces": "Несколько префиксов — через пробел",
+      "Bot and message language": "Язык бота и сообщений",
+      "Sudo users": "Sudo-пользователи",
+      "Telegram user IDs allowed to run safe commands": "ID пользователей Telegram, которым разрешены безопасные команды",
+      "Control bot": "Бот-пульт",
+      "Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.": "Создайте бота в @BotFather, вставьте токен и нажмите Start в боте. Пустое поле сохраняет текущий токен.",
+      "Remove bot": "Отключить бота",
+      "Notifications are delivered by the control bot.": "Уведомления присылает бот-пульт.",
+      "Remove password": "Убрать пароль",
+      "Encrypts the database, the default session, and anti-delete storage on disk. You will need it at every start (or put FLY_MASTER_PASSWORD in fly-telegram.env).": "Шифрует на диске базу, основную сессию и архив анти-удаления. Его нужно вводить при каждом запуске (или положить FLY_MASTER_PASSWORD в fly-telegram.env).",
+      "Remove encryption": "Снять шифрование",
+      "Desktop device profiles": "Профили desktop-устройств",
+      "Give every new account its own generated desktop profile": "Выдавать каждому новому аккаунту свой сгенерированный desktop-профиль",
+      "A profile sets the device name, OS and app version an account reports to Telegram. It stays pinned to the account. Applies after a restart.": "Профиль задаёт название устройства, ОС и версию приложения, которые аккаунт сообщает Telegram. Он закрепляется за аккаунтом. Применяется после перезапуска.",
+      "New profile": "Новый профиль",
+      "Generate for accounts without one": "Создать для аккаунтов без профиля",
+      "No profile": "Без профиля",
+      "Generate new": "Сгенерировать новый",
+      "Profile name": "Название профиля",
+      "Device / PC name": "Устройство / имя ПК",
+      "System version": "Версия системы",
+      "App version": "Версия приложения",
+      "System language": "Язык системы",
+      "App language": "Язык приложения",
+      "Empty keeps the machine language": "Пусто — язык этой машины",
+      "Delete this profile? Accounts using it fall back to the default device.": "Удалить профиль? Аккаунты с ним вернутся к устройству по умолчанию.",
+      "Tor mode: every account uses its own circuit, so accounts leave through different exit IPs.": "Режим Tor: у каждого аккаунта своя цепочка, поэтому выходные IP разные.",
+      "Edit": "Изменить",
+      "Delete": "Удалить",
+      "Network and updates": "Сеть и обновления",
+      "Applies to new connections after a restart.": "Применяется к новым подключениям после перезапуска.",
+      "Check for updates": "Проверить обновления",
+      "Install update": "Установить обновление",
+      "Up to date": "Актуальная версия",
+      "Update available": "Доступно обновление",
+      "Source checkout: update with .update in Telegram": "Установка из исходников: обновляйте командой .update в Telegram",
+      "Restarting…": "Перезапуск…",
+      "Restart the userbot now?": "Перезапустить юзербота сейчас?",
+      "Delete this module?": "Удалить этот модуль?",
+      "Restore this backup? The userbot restarts afterwards.": "Восстановить этот бэкап? После этого юзербот перезапустится.",
+      "Choose a backup file": "Выберите файл бэкапа",
+      "No panel password: sign in with one-time links": "Пароля нет: вход по одноразовым ссылкам",
+      "Panel password is set": "Пароль панели задан",
+      "Database is encrypted": "База зашифрована",
+      "Database is not encrypted": "База не зашифрована",
+      "running": "работает",
+      "not configured": "не настроен",
+      "token set, not running": "токен задан, не работает",
+      "Bot": "Бот",
+      "commands": "команд",
+      "errors": "ошибок",
+      "modules": "модулей",
+      "enabled": "включено",
+      "Set a panel password so the panel is not only protected by one-time links.": "Задайте пароль панели, чтобы вход не зависел только от одноразовых ссылок.",
+      "Connect a control bot to get notifications and a menu in Telegram.": "Подключите бота-пульт, чтобы получать уведомления и меню в Telegram.",
+      "Your database is stored unencrypted. Set a master password in Settings → Security.": "База хранится без шифрования. Задайте мастер-пароль в Настройки → Безопасность.",
+      "Grant permissions": "Выдать разрешения",
+      "Dangerous: gives control over this computer or your account": "Опасно: даёт контроль над этим компьютером или аккаунтом",
+      "events": "события",
+      "bundled": "встроенный",
+      "No settings": "Нет настроек",
+      "Not set": "Не задано",
+      "secret": "секрет",
+      "Reset": "Сбросить",
+      "Enable": "Включить",
+      "Disable": "Выключить",
+      "messages": "сообщений",
+      "(no text)": "(без текста)",
+      "Open media": "Открыть медиа",
+      "Logs are empty": "Логов пока нет",
+      "Disconnected": "Отключено",
+      "Automations": "Автоматизации", "Tasks": "Задачи", "Quick actions": "Быстрые действия",
+      "Getting started": "Первые шаги", "Hide": "Скрыть", "done": "готово",
+      "Set a panel password": "Задайте пароль панели", "Connect the control bot": "Подключите бота-пульт",
+      "Encrypt your data with a master password": "Зашифруйте данные мастер-паролем",
+      "Create your first automation": "Создайте первую автоматизацию", "Pick a theme you like": "Выберите тему по вкусу",
+      "Select one or several accounts, then pick an action.": "Выберите один или несколько аккаунтов и действие.",
+      "Select all": "Выбрать все", "Selected": "Выбрано", "Read all": "Прочитать всё", "Archive inactive": "Архив неактивных",
+      "Mute all": "Выключить звук", "Export": "Экспорт", "Smart cleanup": "Умная очистка", "Edit profile": "Профиль",
+      "Chats": "Чаты", "Groups": "Группы", "Channels": "Каналы", "Bots": "Боты", "Contacts": "Контакты", "Unread": "Непрочитано",
+      "Select at least one account": "Выберите хотя бы один аккаунт",
+      "Archive chats inactive for how many days?": "Архивировать чаты без активности сколько дней?",
+      "Task started": "Задача запущена", "First name": "Имя", "Last name": "Фамилия", "Bio": "О себе", "Name": "Имя",
+      "Leave fields empty to keep them unchanged": "Пустые поля останутся без изменений",
+      "Choose": "Выбор", "Preview": "Предпросмотр",
+      "Cleanup cannot be undone. You will see exactly what will be removed before anything happens, and an export is saved first.": "Очистку нельзя отменить. Перед запуском вы увидите точный список, а экспорт сохранится заранее.",
+      "What to clean": "Что очистить", "Delete contacts": "Удалить контакты", "Leave groups": "Выйти из групп", "Leave channels": "Выйти из каналов",
+      "Delete private chats": "Удалить личные чаты", "Delete bot chats": "Удалить чаты с ботами", "Filters": "Фильтры",
+      "Only inactive for at least (days)": "Только неактивные не меньше (дней)", "Never touch (IDs or @usernames)": "Не трогать (ID или @username)",
+      "Keep chats where I'm admin": "Не трогать, где я админ", "Keep pinned chats": "Не трогать закреплённые", "Only archived chats": "Только архив",
+      "Delete private chats for both sides": "Удалять личные чаты у обеих сторон",
+      "Groups and channels you own are never touched.": "Группы и каналы, которыми вы владеете, не трогаются никогда.",
+      "Build preview": "Показать предпросмотр", "Reading your chats…": "Читаю список чатов…", "items": "элементов",
+      "contacts": "контактов", "chats": "чатов", "bots": "ботов", "groups": "групп", "channels": "каналов", "kept": "оставлено",
+      "owned, skipped": "ваших, пропущено", "Show the list": "Показать список", "Nothing": "Ничего", "Continue": "Далее",
+      "items will be removed. This cannot be undone.": "элементов будет удалено. Отменить нельзя.", "Type": "Введите", "to confirm": "для подтверждения",
+      "Start cleanup": "Начать очистку", "Cancelling": "Отменяю", "Log": "Журнал",
+      "running": "выполняется", "failed": "ошибка", "cancelled": "отменено",
+      "No tasks yet. Start one from the Accounts page.": "Задач пока нет. Запустите их на странице «Аккаунты».",
+      "Account cleanup": "Очистка аккаунта", "Read all chats": "Прочитать все чаты", "Archive inactive chats": "Архивировать неактивные",
+      "Mute all chats": "Выключить звук везде", "Export contacts and chats": "Экспорт контактов и чатов",
+      "Rules run in the background for the accounts you choose.": "Правила работают в фоне для выбранных аккаунтов.",
+      "New rule": "Новое правило", "Scheduled message": "Сообщение по расписанию", "Away reply": "Автоответ",
+      "Auto-forward": "Автопересылка", "Auto-delete": "Автоудаление", "Clock in profile": "Часы в профиле", "Bio rotation": "Смена био",
+      "Online status": "Онлайн-статус", "Auto-read": "Авточтение",
+      "Send a message every N minutes or daily at a set time": "Сообщение каждые N минут или ежедневно в заданное время",
+      "Reply to private messages during set hours": "Автоответ в личку в заданные часы",
+      "Forward new messages from one chat to another": "Пересылка новых сообщений из чата в чат",
+      "Delete your own messages after a delay": "Удаление своих сообщений через время",
+      "Keep the current time in your name or bio": "Текущее время в имени или био",
+      "Cycle your bio through phrases": "Био по очереди из списка фраз",
+      "Always appear online, or always offline": "Всегда онлайн или всегда офлайн",
+      "Mark new messages in chosen chats as read": "Отмечать прочитанными сообщения в выбранных чатах",
+      "every": "каждые", "min": "мин", "daily": "ежедневно", "phrases": "фраз", "always online": "всегда онлайн", "always offline": "всегда офлайн",
+      "All accounts": "Все аккаунты", "No rules yet. Create one to automate routine work.": "Правил пока нет. Создайте первое, чтобы автоматизировать рутину.",
+      "Delete this rule?": "Удалить это правило?", "Message": "Сообщение", "Every N minutes": "Каждые N минут", "Daily at": "Ежедневно в",
+      "Weekdays": "Дни недели", "Mon": "Пн", "Tue": "Вт", "Wed": "Ср", "Thu": "Чт", "Fri": "Пт", "Sat": "Сб", "Sun": "Вс",
+      "None selected means every day": "Если ничего не выбрано — каждый день", "Or leave empty and set a time": "Или оставьте пустым и укажите время",
+      "Reply text": "Текст ответа", "From": "С", "To": "До", "Cooldown, minutes": "Пауза, минут", "From chat ID": "ID чата-источника",
+      "To chat": "Куда", "Use .id in that chat to see it": "Узнать: команда .id в этом чате",
+      "Only messages with these words": "Только сообщения с этими словами", "Comma-separated; empty forwards everything": "Через запятую; пусто — пересылать всё",
+      "Chat IDs": "ID чатов", "Comma-separated": "Через запятую", "Delete after, minutes": "Удалить через, минут", "Where": "Где",
+      "Template": "Шаблон", "Placeholders: {time} {date} {weekday} {clock}": "Подстановки: {time} {date} {weekday} {clock}",
+      "Phrases, one per line": "Фразы, по одной на строку", "Change every N minutes": "Менять каждые N минут",
+      "None selected means all accounts": "Если ничего не выбрано — все аккаунты", "Time zone (UTC offset, hours)": "Часовой пояс (смещение от UTC, часы)",
+      "me, @username, or a chat ID": "me, @username или ID чата", "Chat": "Чат",
+      "Type a command or page…": "Команда или страница…", "Nothing found": "Ничего не найдено",
+      "Go to Overview": "Открыть «Обзор»", "Go to Accounts": "Открыть «Аккаунты»", "Go to Automations": "Открыть «Автоматизации»",
+      "Go to Tasks": "Открыть «Задачи»", "Go to Modules": "Открыть «Модули»", "Go to Logs": "Открыть «Логи»",
+      "Go to Anti-delete": "Открыть «Анти-удаление»", "Go to Backups": "Открыть «Бэкапы»", "Go to Settings": "Открыть «Настройки»",
+      "New automation rule": "Новое правило автоматизации", "Check for updates": "Проверить обновления",
+      "Midnight": "Полночь", "Ocean": "Океан", "Forest": "Лес", "Sunset": "Закат", "Rose": "Роза",
+    }});
+
+    const $ = (id) => document.getElementById(id);
+    const esc = Fly.esc;
+    let currentPage = "overview";
+    let statusData = null;
+    let settingsData = null;
+    let modulesData = [];
+    let moduleFilter = "all";
+    let lastLogId = 0;
+
+    function showPage(page) {
+      currentPage = page;
+      document.querySelectorAll(".page").forEach((el) => el.classList.toggle("hidden", el.id !== `page-${page}`));
+      document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.page === page));
+      $("sidebar").classList.remove("open");
+      Fly.store.set("fly.page", page);
+      if (location.hash !== `#${page}`) history.replaceState(null, "", `#${page}`);
+      ({ overview: loadStatus, accounts: loadAccounts, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: loadDeleted, backups: loadSettings, settings: loadSettings })[page]?.();
+    }
+    document.querySelectorAll(".nav-item").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.page)));
+    $("menu-toggle").addEventListener("click", () => $("sidebar").classList.toggle("open"));
+
+    function syncLangTabs() {
+      document.querySelectorAll("[data-lang]").forEach((el) => el.classList.toggle("active", el.dataset.lang === Fly.lang));
+    }
+    document.querySelectorAll("[data-lang]").forEach((el) => el.addEventListener("click", () => {
+      Fly.setLang(el.dataset.lang);
+      syncLangTabs();
+      showPage(currentPage);
+    }));
+    $("theme").addEventListener("click", openAppearance);
+    function openAppearance() {
+      const host = document.createElement("div");
+      Fly.renderAppearance(host);
+      openModal(Fly.t("Appearance"), host);
+    }
+    $("logout").addEventListener("click", async () => {
+      await Fly.api("/auth/logout", { method: "POST" }).catch(() => {});
+      location.href = "/auth";
+    });
+
+    function openModal(title, body) {
+      $("modal-title").textContent = title;
+      const host = $("modal-body");
+      host.innerHTML = "";
+      if (typeof body === "string") host.innerHTML = body; else host.appendChild(body);
+      $("modal").classList.remove("hidden");
+    }
+    function closeModal() { $("modal").classList.add("hidden"); }
+    $("modal-close").addEventListener("click", closeModal);
+    $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+    async function action(fn, okMessage) {
+      try {
+        const result = await fn();
+        if (okMessage) Fly.toast(Fly.t(okMessage), "ok");
+        return result;
+      } catch (e) {
+        Fly.toast(e.message, "err");
+        throw e;
+      }
+    }
+
+    async function loadStatus() {
+      try {
+        statusData = await Fly.api("/api/status");
+      } catch { return; }
+      const s = statusData;
+      $("version").textContent = `v${s.version}`;
+      $("overview-sub").textContent = `${s.target} · ${Fly.t("Command prefixes")}: ${s.prefixes.join(" ")}`;
+      $("stat-uptime").textContent = Fly.duration(s.uptime_seconds);
+      $("stat-conn").innerHTML = `<span class="dot ${s.connected ? "ok" : "err"}"></span> ${esc(Fly.t(s.connected ? "Connected" : "Disconnected"))}`;
+      Fly.countTo($("stat-commands"), s.commands_seen);
+      $("stat-errors").textContent = `${s.errors_seen} ${Fly.t("errors")}`;
+      Fly.countTo($("stat-updates"), s.updates_seen);
+      $("stat-modules").textContent = `${s.modules_enabled}/${s.module_count} ${Fly.t("modules")} ${Fly.t("enabled")}`;
+      $("stat-memory").textContent = Fly.bytes(s.memory_bytes);
+      $("stat-cpu").textContent = s.cpu_percent == null ? "" : `CPU ${s.cpu_percent.toFixed(1)}%`;
+      renderBotStatus(s.bot);
+      renderChart(s.activity);
+      renderTopCommands(s.top_commands, s.prefixes[0]);
+      renderAccounts(s.accounts);
+      renderAlerts(s);
+      renderChecklist(s);
+      updateTasksBadge(s.jobs_running);
+    }
+
+    function updateTasksBadge(count) {
+      $("tasks-badge").textContent = count;
+      $("tasks-badge").classList.toggle("hidden", !count);
+    }
+
+    let rulesCount = null;
+    function renderChecklist(s) {
+      if (Fly.store.get("fly.checklist.hidden", "") === "1" || !settingsData) {
+        $("checklist-card").classList.add("hidden");
+        return;
+      }
+      const items = [
+        [settingsData.panel_password_set, "🔐", "Set a panel password", "settings"],
+        [s.bot.running, "🤖", "Connect the control bot", "settings"],
+        [s.db_encrypted, "🛡", "Encrypt your data with a master password", "settings"],
+        [rulesCount > 0, "⚡", "Create your first automation", "automations"],
+        [Fly.store.get("fly.theme", "auto") !== "auto" || Fly.store.get("fly.accent", "") !== "", "🎨", "Pick a theme you like", "appearance"],
+      ];
+      const done = items.filter(([ok]) => ok).length;
+      if (done === items.length) { $("checklist-card").classList.add("hidden"); return; }
+      $("checklist-card").classList.remove("hidden");
+      $("checklist-progress").textContent = `${done}/${items.length} ${Fly.t("done")}`;
+      $("checklist").innerHTML = items.map(([ok, icon, text, page]) => `
+        <div class="check-item ${ok ? "done" : ""}" data-go="${page}">
+          <span class="mark">${ok ? "✓" : ""}</span><span>${icon} ${esc(Fly.t(text))}</span>
+        </div>`).join("");
+      $("checklist").querySelectorAll(".check-item:not(.done)").forEach((el) => el.addEventListener("click", () => {
+        if (el.dataset.go === "appearance") openAppearance(); else showPage(el.dataset.go);
+      }));
+    }
+    $("checklist-hide").addEventListener("click", () => { Fly.store.set("fly.checklist.hidden", "1"); $("checklist-card").classList.add("hidden"); });
+
+    function renderBotStatus(bot) {
+      $("bot-status").innerHTML = bot.running
+        ? `<span class="dot ok"></span> ${esc(Fly.t("Bot"))} <a href="https://t.me/${esc(bot.username)}" target="_blank" rel="noopener">@${esc(bot.username)}</a>`
+        : `<span class="dot"></span> ${esc(Fly.t("Bot"))}: ${esc(Fly.t("not configured"))}`;
+    }
+
+    function renderAlerts(s) {
+      const alerts = [];
+      if (settingsData && !settingsData.panel_password_set) alerts.push(["warn", "Set a panel password so the panel is not only protected by one-time links.", "settings"]);
+      if (!s.bot.running) alerts.push(["", "Connect a control bot to get notifications and a menu in Telegram.", "settings"]);
+      if (!s.db_encrypted) alerts.push(["warn", "Your database is stored unencrypted. Set a master password in Settings → Security.", "settings"]);
+      $("alerts").innerHTML = alerts.map(([kind, text, page]) =>
+        `<div class="alert ${kind}" role="button" style="cursor:pointer" data-goto="${page}">${esc(Fly.t(text))}</div>`).join("");
+      $("alerts").querySelectorAll("[data-goto]").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.goto)));
+    }
+
+    function renderChart(series) {
+      const svg = $("chart");
+      const w = 600, h = 160, pad = 18;
+      const maxValue = Math.max(4, ...series.map((b) => b.updates), ...series.map((b) => b.commands));
+      const x = (i) => (i / Math.max(1, series.length - 1)) * w;
+      const y = (v) => h - pad - (v / maxValue) * (h - pad * 2);
+      const line = (key) => series.map((b, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(b[key]).toFixed(1)}`).join(" ");
+      const area = `${line("updates")} L${w},${h - pad} L0,${h - pad} Z`;
+      const grid = [0, 0.5, 1].map((f) => {
+        const gy = y(maxValue * f);
+        return `<line class="grid-line" x1="0" x2="${w}" y1="${gy}" y2="${gy}"/><text x="4" y="${gy - 3}">${Math.round(maxValue * f)}</text>`;
+      }).join("");
+      svg.innerHTML = `${grid}<path class="area" d="${area}"/><path class="line" d="${line("updates")}"/><path class="line2" d="${line("commands")}"/>`;
+    }
+
+    function renderTopCommands(top, prefix) {
+      if (!top.length) {
+        $("top-commands").innerHTML = `<div class="empty">${esc(Fly.t("No commands yet"))}</div>`;
+        return;
+      }
+      const max = Math.max(...top.map((c) => c.count));
+      $("top-commands").innerHTML = top.map((c) => `
+        <div class="bar-row"><code>${esc(prefix + c.command)}</code>
+          <div class="bar-track"><div class="bar-fill" style="width:${(c.count / max) * 100}%"></div></div>
+          <span class="faint">${c.count}</span></div>`).join("");
+    }
+
+    // Telegram avatar when downloaded, otherwise the first letter on the given background.
+    function avatarHtml(cls, url, name, style = "") {
+      const letter = esc((name || "?").slice(0, 1).toUpperCase());
+      if (!url) return `<div class="${cls}" style="${style}">${letter}</div>`;
+      return `<div class="${cls}" style="${style};overflow:hidden"><img src="${esc(url)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.remove()"></div>`;
+    }
+
+    function chatAvatarUrl(chat) {
+      const path = chat?.avatar_path || "";
+      const marker = "data/avatars/";
+      const index = path.replace(/\\/g, "/").indexOf(marker);
+      return index < 0 ? "" : "/avatars/" + path.replace(/\\/g, "/").slice(index + marker.length).split("/").map(encodeURIComponent).join("/");
+    }
+
+    function renderAccounts(accounts) {
+      $("accounts").innerHTML = accounts.length ? accounts.map((a) => `
+        <div class="acct">
+          ${avatarHtml("avatar", a.avatar, a.name)}
+          <div style="flex:1;min-width:0"><div><b>${esc(a.name)}</b> <span class="faint small">${esc(a.account_id)}</span></div>
+            <div class="small faint">${esc(a.session_file)}</div></div>
+          <span class="badge ${a.connected ? "ok" : "err"}">${esc(Fly.t(a.connected ? "Connected" : "Disconnected"))}</span>
+          <span class="small muted">${a.commands_seen} ${esc(Fly.t("commands"))}</span>
+        </div>`).join("") : `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
+    }
+
+    $("btn-restart").addEventListener("click", async () => {
+      if (!confirm(Fly.t("Restart the userbot now?"))) return;
+      await action(() => Fly.api("/api/restart", { method: "POST" }), "Restarting…");
+      waitForRestart();
+    });
+
+    function waitForRestart() {
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const res = await fetch("/api/status", { credentials: "same-origin" });
+          if (res.ok && Date.now() - started > 2500) { location.reload(); return; }
+          if (res.status === 401) { location.href = "/auth"; return; }
+        } catch { /* restarting */ }
+        if (Date.now() - started < 90000) setTimeout(poll, 1500);
+      };
+      setTimeout(poll, 2000);
+    }
+
+    async function loadModules() {
+      try { modulesData = await Fly.api("/api/modules"); } catch { return; }
+      renderModules();
+    }
+
+    function renderModules() {
+      const q = $("module-search").value.trim().toLowerCase();
+      const list = modulesData.filter((m) => {
+        if (moduleFilter === "on" && !m.enabled) return false;
+        if (moduleFilter === "off" && m.enabled) return false;
+        if (moduleFilter === "sandbox" && m.trusted) return false;
+        if (!q) return true;
+        return m.name.toLowerCase().includes(q) || (m.help.description || m.description || "").toLowerCase().includes(q)
+          || m.commands.some((c) => c.includes(q));
+      });
+      const enabled = modulesData.filter((m) => m.enabled).length;
+      $("modules-sub").textContent = `${enabled}/${modulesData.length} ${Fly.t("enabled")}`;
+      const prefix = statusData?.prefixes?.[0] || ".";
+      $("module-grid").innerHTML = list.map((m) => `
+        <div class="card module-card hover-lift ${m.enabled ? "" : "off"}" data-name="${esc(m.name)}">
+          <div class="row between">
+            <div><b>${esc(m.name)}</b> <span class="faint small">v${esc(m.version)}</span></div>
+            <label class="switch" title="${esc(Fly.t(m.enabled ? "Disable" : "Enable"))}"><input type="checkbox" data-act="toggle" ${m.enabled ? "checked" : ""}><span></span></label>
+          </div>
+          <div class="chips">
+            <span class="badge ${m.trusted ? "info" : "warn"}">${esc(Fly.t(m.trusted ? "trusted" : "sandboxed"))}</span>
+            ${m.bundled ? `<span class="badge">${esc(Fly.t("bundled"))}</span>` : ""}
+            ${m.events ? `<span class="badge">${esc(Fly.t("events"))}</span>` : ""}
+            ${m.audit.length && !m.trusted ? `<span class="badge err">${esc(m.audit.join(", "))}</span>` : ""}
+          </div>
+          <p class="desc">${esc(m.help.description || m.description || "")}</p>
+          <div class="chips">${m.commands.map((c) => `<span class="chip">${esc(prefix + c)}</span>`).join("")}</div>
+          <div class="module-actions">
+            ${m.config.length ? `<button class="btn btn-sm" data-act="config">⚙ ${esc(Fly.t("Configure"))}</button>` : ""}
+            ${!m.trusted ? `<button class="btn btn-sm" data-act="perms">🔐 ${esc(Fly.t("Permissions"))}</button>` : ""}
+            <button class="btn btn-sm" data-act="source">${esc(Fly.t("Source"))}</button>
+            <button class="btn btn-sm" data-act="reload">${esc(Fly.t("Reload"))}</button>
+            ${!m.bundled ? `<button class="btn btn-sm btn-danger" data-act="delete">${esc(Fly.t("Delete"))}</button>` : ""}
+          </div>
+        </div>`).join("") || `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
+    }
+
+    $("module-search").addEventListener("input", renderModules);
+    $("module-filter").addEventListener("click", (e) => {
+      const tab = e.target.closest("[data-filter]");
+      if (!tab) return;
+      moduleFilter = tab.dataset.filter;
+      $("module-filter").querySelectorAll(".tab").forEach((el) => el.classList.toggle("active", el === tab));
+      renderModules();
+    });
+
+    $("module-grid").addEventListener("click", async (e) => {
+      const button = e.target.closest("[data-act]");
+      if (!button || button.dataset.act === "toggle") return;
+      const name = button.closest("[data-name]").dataset.name;
+      const module = modulesData.find((m) => m.name === name);
+      const act = button.dataset.act;
+      if (act === "reload") await action(() => Fly.api(`/api/modules/${encodeURIComponent(name)}/reload`, { method: "POST" }), "Saved");
+      if (act === "delete" && confirm(Fly.t("Delete this module?"))) {
+        await action(() => Fly.api(`/api/modules/${encodeURIComponent(name)}`, { method: "DELETE" }), "Saved");
+      }
+      if (act === "source") {
+        const source = await Fly.api(`/api/modules/${encodeURIComponent(name)}/source`);
+        openModal(`${name}.lua`, `<pre class="code-block">${esc(source)}</pre>`);
+        return;
+      }
+      if (act === "config") return openConfig(module);
+      if (act === "perms") return openPermissions(module);
+      loadModules();
+    });
+
+    $("module-grid").addEventListener("change", async (e) => {
+      if (e.target.dataset.act !== "toggle") return;
+      const name = e.target.closest("[data-name]").dataset.name;
+      await action(() => Fly.api(`/api/modules/${encodeURIComponent(name)}/enabled`, { body: { enabled: e.target.checked } })).catch(() => {});
+      loadModules();
+    });
+
+    function openConfig(module) {
+      const form = document.createElement("form");
+      form.className = "stack";
+      form.innerHTML = module.config.map((entry) => {
+        const id = `cfg-${entry.key}`;
+        const desc = entry.description ? `<span class="hint">${esc(entry.description)}</span>` : "";
+        let input;
+        if (entry.type === "bool") {
+          input = `<label class="switch"><input type="checkbox" id="${id}" ${entry.value === true ? "checked" : ""}><span></span></label>`;
+        } else if (entry.type === "select") {
+          input = `<select class="input" id="${id}">${entry.options.map((o) => `<option ${o === entry.value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+        } else if (entry.type === "text") {
+          input = `<textarea class="input" id="${id}">${esc(entry.value ?? "")}</textarea>`;
+        } else {
+          const placeholder = entry.secret ? (entry.is_set ? "••••••" : Fly.t("Not set")) : "";
+          const value = entry.secret ? "" : (entry.value ?? "");
+          input = `<input class="input ${entry.secret ? "mono" : ""}" id="${id}" type="${entry.secret ? "password" : entry.type === "number" ? "number" : "text"}" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off">`;
+        }
+        return `<div class="field"><label for="${id}">${esc(entry.key)} ${entry.secret ? `<span class="badge">${esc(Fly.t("secret"))}</span>` : ""}</label>${input}${desc}</div>`;
+      }).join("") + `<div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        for (const entry of module.config) {
+          const el = $(`cfg-${entry.key}`);
+          let value;
+          if (entry.type === "bool") value = el.checked;
+          else if (entry.type === "number") value = el.value === "" ? null : Number(el.value);
+          else value = el.value;
+          if (entry.secret && value === "") continue;
+          if (entry.type !== "bool" && entry.type !== "select" && !entry.secret && value === (entry.value ?? "")) continue;
+          if (entry.type === "bool" && value === entry.value) continue;
+          if (entry.type === "select" && value === entry.value) continue;
+          try {
+            await Fly.api(`/api/modules/${encodeURIComponent(module.name)}/config`, { body: { key: entry.key, value } });
+          } catch (err) {
+            Fly.toast(`${entry.key}: ${err.message}`, "err");
+            return;
+          }
+        }
+        Fly.toast(Fly.t("Saved"), "ok");
+        closeModal();
+        loadModules();
+      });
+      openModal(`${module.name} · ${Fly.t("Settings")}`, form);
+    }
+
+    const PERMISSIONS = ["network", "telegram.read", "telegram.history", "telegram.media", "modules.install", "secrets", "shell", "core.admin"];
+    const DANGEROUS = ["modules.install", "secrets", "shell", "core.admin"];
+
+    function openPermissions(module) {
+      const form = document.createElement("form");
+      form.className = "stack";
+      const requested = new Set(module.audit);
+      form.innerHTML = `<div class="perm-grid">${PERMISSIONS.map((p) => `
+        <label><input type="checkbox" value="${p}" ${module.permissions.includes(p) ? "checked" : ""}>
+          <code>${p}</code>${requested.has(p) ? ` <span class="badge info">used</span>` : ""}
+          ${DANGEROUS.includes(p) ? ` <span class="badge err" title="${esc(Fly.t("Dangerous: gives control over this computer or your account"))}">!</span>` : ""}</label>`).join("")}</div>
+        <p class="small faint" style="margin:0">${esc(Fly.t("Dangerous: gives control over this computer or your account"))}: ${DANGEROUS.join(", ")}</p>
+        <div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const permissions = [...form.querySelectorAll("input:checked")].map((el) => el.value);
+        await action(() => Fly.api(`/api/modules/${encodeURIComponent(module.name)}/permissions`, { body: { permissions } }), "Saved");
+        closeModal();
+        loadModules();
+      });
+      openModal(`${module.name} · ${Fly.t("Grant permissions")}`, form);
+    }
+
+    $("install-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const url = $("install-url").value.trim();
+      if (!url) return;
+      const result = await action(() => Fly.api("/api/modules/install", { body: { url } }), "Saved").catch(() => null);
+      if (result) {
+        $("install-url").value = "";
+        setTimeout(loadModules, 800);
+      }
+    });
+
+    async function loadLogs(reset) {
+      if (reset) { lastLogId = 0; $("log-box").innerHTML = ""; }
+      const level = $("log-level").value;
+      let records;
+      try {
+        records = await Fly.api(`/api/logs?after=${lastLogId}${level ? `&level=${level}` : ""}&limit=500`);
+      } catch { return; }
+      if (!records.length && !lastLogId) {
+        $("log-box").innerHTML = `<div class="empty">${esc(Fly.t("Logs are empty"))}</div>`;
+        return;
+      }
+      if (!lastLogId) $("log-box").innerHTML = "";
+      const box = $("log-box");
+      const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+      for (const r of records) {
+        const line = document.createElement("div");
+        line.className = "log-line";
+        const time = new Date(r.ts_ms).toLocaleTimeString();
+        line.innerHTML = `<span class="faint">${esc(time)}</span><span class="lvl lvl-${esc(r.level)}">${esc(r.level)}</span><span style="word-break:break-word">${esc(r.message)}</span>`;
+        box.appendChild(line);
+        lastLogId = Math.max(lastLogId, r.id);
+      }
+      while (box.children.length > 1500) box.removeChild(box.firstChild);
+      if (atBottom || reset) box.scrollTop = box.scrollHeight;
+    }
+    $("log-level").addEventListener("change", () => loadLogs(true));
+
+    let adTimer = null;
+    function scheduleDeleted() { clearTimeout(adTimer); adTimer = setTimeout(loadDeleted, 300); }
+    ["ad-q", "ad-chat"].forEach((id) => $(id).addEventListener("input", scheduleDeleted));
+    $("ad-media").addEventListener("change", loadDeleted);
+
+    function mediaUrl(path) {
+      if (!path) return null;
+      const normalized = path.replaceAll("\\", "/");
+      const prefix = "data/deleted_media/";
+      return normalized.startsWith(prefix) ? `/media/${normalized.slice(prefix.length).split("/").map(encodeURIComponent).join("/")}` : null;
+    }
+
+    async function loadDeleted() {
+      const params = new URLSearchParams({ limit: "200" });
+      if ($("ad-q").value.trim()) params.set("q", $("ad-q").value.trim());
+      if ($("ad-chat").value.trim()) params.set("chat", $("ad-chat").value.trim());
+      if ($("ad-media").value) params.set("media_type", $("ad-media").value);
+      let data;
+      try { data = await Fly.api(`/api/deletelog?${params}`); } catch { return; }
+      if (!settingsData) await loadSettings();
+      const on = settingsData?.toggles?.find((t) => t.key === "handlers.antidelete.enabled")?.enabled;
+      $("ad-disabled").classList.toggle("hidden", !!on);
+      if (data.error) { $("ad-list").innerHTML = `<div class="alert err">${esc(data.error)}</div>`; return; }
+      const messages = data.messages || [];
+      $("ad-sub").textContent = `${messages.length} ${Fly.t("messages")}`;
+      $("ad-list").innerHTML = messages.map((m) => {
+        const url = mediaUrl(m.media_path);
+        let media = "";
+        if (url) {
+          if (["photo", "image", "sticker"].includes(m.media_type)) media = `<div class="msg-media"><img src="${url}" alt="" loading="lazy"></div>`;
+          else if (m.media_type === "video") media = `<div class="msg-media"><video src="${url}" controls preload="none"></video></div>`;
+          else if (m.media_type === "audio") media = `<audio src="${url}" controls preload="none"></audio>`;
+          else media = `<a href="${url}" target="_blank" rel="noopener">${esc(Fly.t("Open media"))}</a>`;
+        }
+        const deleted = m.deleted_at ? new Date(Number(m.deleted_at) * 1000).toLocaleString() : "";
+        return `<div class="msg-card">
+          <div class="row between"><div class="row" style="gap:10px">${avatarHtml("avatar", chatAvatarUrl(m.chat), m.chat?.title, `background:${Fly.avatarGradient(m.chat?.id || "")}`)}<div><b>${esc(m.chat?.title || "?")}</b> <span class="faint small">${esc(m.chat?.kind || "")} · ${esc(m.account?.name || "")}${m.sender_id ? ` · ${esc(m.sender_id)}` : ""}</span></div></div>
+            <span class="small faint">🗑 ${esc(deleted)}</span></div>
+          <div class="msg-text">${m.text ? esc(m.text) : `<span class="faint">${esc(Fly.t("(no text)"))}</span>`}</div>
+          ${m.media_type ? `<div class="chips"><span class="badge">${esc(m.media_type)}</span>${m.media_size ? `<span class="badge">${esc(Fly.bytes(m.media_size))}</span>` : ""}${m.media_name ? `<span class="badge">${esc(m.media_name)}</span>` : ""}</div>` : ""}
+          ${media}
+        </div>`;
+      }).join("") || `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
+    }
+
+    let profilesData = { enabled: false, profiles: [], accounts: [] };
+
+    async function loadProfiles() {
+      try { profilesData = await Fly.api("/api/profiles"); } catch { return; }
+      $("prof-enabled").checked = profilesData.enabled;
+      $("prof-list").innerHTML = profilesData.profiles.map((p) => `
+        <div class="row between" data-prof="${esc(p.id)}">
+          <div style="min-width:0"><b>${esc(p.name)}</b>
+            <div class="small faint">${esc(p.device_model)} · ${esc(p.system_version)} · ${esc(p.app_version)}</div></div>
+          <div class="row"><button class="btn" data-act="edit">${esc(Fly.t("Edit"))}</button><button class="btn btn-danger" data-act="del">${esc(Fly.t("Delete"))}</button></div>
+        </div>`).join("") || `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
+      $("prof-accounts").innerHTML = profilesData.accounts.map((a) => `
+        <div class="row between" data-account="${a.id}">
+          <b>${esc(a.name)}</b>
+          <select class="input" style="max-width:260px" data-act="assign">
+            <option value="">${esc(Fly.t("No profile"))}</option>
+            <option value="__generate">${esc(Fly.t("Generate new"))}</option>
+            ${profilesData.profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === a.profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+          </select>
+        </div>`).join("");
+    }
+
+    function openProfileForm(profile) {
+      const p = profile || { name: "", device_model: "", system_version: "", app_version: "", system_lang_code: "", lang_code: "" };
+      const form = document.createElement("form");
+      form.className = "stack";
+      const field = (label, name, hint = "") => `<div class="field"><label>${esc(Fly.t(label))}</label><input class="input" name="${name}" value="${esc(p[name] || "")}" maxlength="64">${hint ? `<span class="hint">${esc(Fly.t(hint))}</span>` : ""}</div>`;
+      form.innerHTML = `
+        ${field("Profile name", "name")}
+        ${field("Device / PC name", "device_model")}
+        ${field("System version", "system_version")}
+        ${field("App version", "app_version")}
+        <div class="grid grid-2">${field("System language", "system_lang_code", "Empty keeps the machine language")}${field("App language", "lang_code")}</div>
+        <div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(form).entries());
+        const body = { profile: { ...(profile || {}), ...data, generated: false } };
+        await action(() => Fly.api("/api/profiles", { body }), "Saved").catch(() => {});
+        closeModal();
+        loadProfiles();
+      });
+      openModal(Fly.t("Desktop device profiles"), form);
+    }
+
+    $("prof-enabled").addEventListener("change", async (e) => {
+      await action(() => Fly.api("/api/profiles", { body: { enabled: e.target.checked } }), "Saved").catch(() => {});
+      loadProfiles();
+    });
+    $("prof-new").addEventListener("click", () => openProfileForm(null));
+    $("prof-assign-all").addEventListener("click", async () => {
+      await action(() => Fly.api("/api/profiles/assign", { body: { generate: true } }), "Saved").catch(() => {});
+      loadProfiles();
+    });
+    $("prof-list").addEventListener("click", async (e) => {
+      const button = e.target.closest("button[data-act]");
+      if (!button) return;
+      const profile = profilesData.profiles.find((p) => p.id === button.closest("[data-prof]").dataset.prof);
+      if (!profile) return;
+      if (button.dataset.act === "edit") return openProfileForm(profile);
+      if (!confirm(Fly.t("Delete this profile? Accounts using it fall back to the default device."))) return;
+      await action(() => Fly.api(`/api/profiles/${encodeURIComponent(profile.id)}`, { method: "DELETE" }), "Saved").catch(() => {});
+      loadProfiles();
+    });
+    $("prof-accounts").addEventListener("change", async (e) => {
+      const select = e.target.closest("select[data-act]");
+      if (!select) return;
+      const account = Number(select.closest("[data-account]").dataset.account);
+      const body = select.value === "__generate" ? { account, generate: true } : { account, profile_id: select.value || null };
+      await action(() => Fly.api("/api/profiles/assign", { body }), "Saved").catch(() => {});
+      loadProfiles();
+    });
+
+    $("restore-btn").addEventListener("click", async () => {
+      const file = $("restore-file").files[0];
+      if (!file) return Fly.toast(Fly.t("Choose a backup file"), "err");
+      if (!confirm(Fly.t("Restore this backup? The userbot restarts afterwards."))) return;
+      const body = new FormData();
+      body.append("file", file);
+      await action(() => Fly.api("/api/restore", { body }), "Restarting…");
+      waitForRestart();
+    });
+
+    async function loadSettings() {
+      try { settingsData = await Fly.api("/api/settings"); } catch { return; }
+      const s = settingsData;
+      $("set-prefixes").value = s.prefixes.join(" ");
+      $("set-language").value = s.language;
+      $("set-sudo").value = s.sudo_users.join(" ");
+      $("set-proxy").value = s.proxy_url || "";
+      $("tor-badge").classList.toggle("hidden", !s.tor);
+      $("tor-hint").classList.toggle("hidden", !s.tor);
+      $("panel-pw-state").textContent = Fly.t(s.panel_password_set ? "Panel password is set" : "No panel password: sign in with one-time links");
+      $("master-state").textContent = Fly.t(s.db_encrypted ? "Database is encrypted" : "Database is not encrypted");
+      $("backup-warning").classList.toggle("hidden", s.db_encrypted);
+      $("bot-badge").innerHTML = s.bot.running
+        ? `<span class="badge ok">@${esc(s.bot.username)} · ${esc(Fly.t("running"))}</span>`
+        : `<span class="badge ${s.bot.configured ? "warn" : ""}">${esc(Fly.t(s.bot.configured ? "token set, not running" : "not configured"))}</span>`;
+      $("remove-bot").classList.toggle("hidden", !s.bot.configured);
+      for (const group of ["handlers", "notifications"]) {
+        $(`toggles-${group}`).innerHTML = s.toggles.filter((t) => t.group === group).map((t) => `
+          <div class="setting-row"><span class="label">${esc(Fly.lang === "ru" ? t.label_ru : t.label_en)}</span>
+            <label class="switch"><input type="checkbox" data-toggle="${esc(t.key)}" ${t.enabled ? "checked" : ""}><span></span></label></div>`).join("");
+      }
+    }
+
+    document.addEventListener("change", async (e) => {
+      const key = e.target.dataset?.toggle;
+      if (!key) return;
+      await action(() => Fly.api("/api/settings", { body: { toggles: { [key]: e.target.checked } } }), "Saved").catch(() => {});
+      loadSettings();
+    });
+
+    async function saveSettings(body, reload = true) {
+      await action(() => Fly.api("/api/settings", { body }), "Saved");
+      if (reload) loadSettings();
+    }
+
+    $("save-general").addEventListener("click", () => saveSettings({
+      prefixes: $("set-prefixes").value.split(/\s+/).filter(Boolean),
+      language: $("set-language").value,
+      sudo_users: $("set-sudo").value.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n)),
+    }).catch(() => {}));
+    $("save-bot").addEventListener("click", () => {
+      const token = $("set-bot").value.trim();
+      if (!token) return;
+      saveSettings({ bot_token: token }).then(() => { $("set-bot").value = ""; loadStatus(); }).catch(() => {});
+    });
+    $("remove-bot").addEventListener("click", () => saveSettings({ bot_token: "" }).then(loadStatus).catch(() => {}));
+    $("save-panel-pw").addEventListener("click", () => {
+      const pw = $("set-panel-pw").value;
+      if (!pw) return;
+      saveSettings({ panel_password: pw }).then(() => { $("set-panel-pw").value = ""; }).catch(() => {});
+    });
+    $("clear-panel-pw").addEventListener("click", () => saveSettings({ clear_panel_password: true }).catch(() => {}));
+    $("save-master").addEventListener("click", () => {
+      const pw = $("set-master").value;
+      if (!pw) return;
+      saveSettings({ master_password: pw }).then(() => { $("set-master").value = ""; }).catch(() => {});
+    });
+    $("clear-master").addEventListener("click", () => saveSettings({ clear_master_password: true }).catch(() => {}));
+    $("save-proxy").addEventListener("click", () => saveSettings({ proxy_url: $("set-proxy").value.trim() }).catch(() => {}));
+
+    $("check-update").addEventListener("click", async () => {
+      $("update-state").textContent = "…";
+      try {
+        const info = await Fly.api("/api/update");
+        if (info.source_checkout) {
+          $("update-state").textContent = `v${info.current} · ${Fly.t("Source checkout: update with .update in Telegram")}`;
+        } else if (info.newer) {
+          $("update-state").innerHTML = `v${esc(info.current)} → <b>v${esc(info.latest)}</b> · <a href="${esc(info.url)}" target="_blank" rel="noopener">${esc(Fly.t("Update available"))}</a>`;
+          $("install-update").classList.toggle("hidden", !info.has_binary);
+        } else {
+          $("update-state").textContent = `v${info.current} · ${Fly.t("Up to date")}`;
+        }
+      } catch (e) {
+        $("update-state").textContent = e.message;
+      }
+    });
+    $("install-update").addEventListener("click", async () => {
+      await action(() => Fly.api("/api/update", { method: "POST" }), "Restarting…");
+      waitForRestart();
+    });
+
+    let accountsData = [];
+    const selectedAccounts = new Set(JSON.parse(Fly.store.get("fly.accounts.selected", "[]")));
+    const countsCache = {};
+
+    function saveSelection() { Fly.store.set("fly.accounts.selected", JSON.stringify([...selectedAccounts])); }
+
+    async function loadAccounts() {
+      try { accountsData = await Fly.api("/api/accounts"); } catch { return; }
+      for (const id of [...selectedAccounts]) if (!accountsData.some((a) => a.id === id)) selectedAccounts.delete(id);
+      if (!selectedAccounts.size && accountsData.length === 1) selectedAccounts.add(accountsData[0].id);
+      renderAccounts2();
+      for (const account of accountsData) {
+        Fly.api(`/api/accounts/${account.id}/counts`).then((counts) => {
+          countsCache[account.id] = counts;
+          renderAccounts2();
+        }).catch(() => {});
+      }
+    }
+
+    function renderAccounts2() {
+      $("acc-selected-label").textContent = `${Fly.t("Selected")}: ${selectedAccounts.size}/${accountsData.length}`;
+      $("acc-grid").innerHTML = accountsData.map((a) => {
+        const c = countsCache[a.id];
+        const stat = (value, label) => `<div class="mini-stat"><b>${value ?? "…"}</b><span>${esc(Fly.t(label))}</span></div>`;
+        return `<div class="card acct-card hover-lift ${selectedAccounts.has(a.id) ? "selected" : ""}" data-acc="${a.id}">
+          <input type="checkbox" class="select" ${selectedAccounts.has(a.id) ? "checked" : ""} aria-label="select">
+          <div class="row">
+            ${avatarHtml("avatar-lg", a.avatar, a.name, `background:${Fly.avatarGradient(a.id)}`)}
+            <div style="min-width:0"><b>${esc(a.name)}</b><div class="small faint">${a.id}</div>
+              <span class="badge ${a.connected ? "ok" : "err"}">${esc(Fly.t(a.connected ? "Connected" : "Disconnected"))}</span></div>
+          </div>
+          <div class="mini-stats">
+            ${stat(c?.users, "Chats")}${stat(c?.groups, "Groups")}${stat(c?.channels, "Channels")}
+            ${stat(c?.bots, "Bots")}${stat(c?.contacts, "Contacts")}${stat(c?.unread, "Unread")}
+          </div>
+          <div class="row"><button class="btn btn-sm" data-profile="${a.id}">✏️ ${esc(Fly.t("Edit profile"))}</button></div>
+        </div>`;
+      }).join("") || `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
+    }
+
+    $("acc-grid").addEventListener("click", (e) => {
+      const profile = e.target.closest("[data-profile]");
+      if (profile) return openProfile(Number(profile.dataset.profile));
+      const card = e.target.closest("[data-acc]");
+      if (!card) return;
+      const id = Number(card.dataset.acc);
+      if (selectedAccounts.has(id)) selectedAccounts.delete(id); else selectedAccounts.add(id);
+      saveSelection();
+      renderAccounts2();
+    });
+    $("acc-select-all").addEventListener("click", () => {
+      if (selectedAccounts.size === accountsData.length) selectedAccounts.clear();
+      else accountsData.forEach((a) => selectedAccounts.add(a.id));
+      saveSelection();
+      renderAccounts2();
+    });
+
+    function requireSelection() {
+      if (!selectedAccounts.size) { Fly.toast(Fly.t("Select at least one account"), "err"); return null; }
+      return [...selectedAccounts];
+    }
+
+    document.querySelectorAll("[data-bulk]").forEach((button) => button.addEventListener("click", async () => {
+      const accounts = requireSelection();
+      if (!accounts) return;
+      const action = button.dataset.bulk;
+      let days;
+      if (action === "archive_inactive") {
+        const answer = prompt(Fly.t("Archive chats inactive for how many days?"), "30");
+        if (answer === null) return;
+        days = Math.max(1, Number(answer) || 30);
+      }
+      await action_(() => Fly.api("/api/accounts/bulk", { body: { accounts, action, days } }), "Task started");
+      showPage("tasks");
+    }));
+
+    // Small wrapper so bulk handlers can reuse the toast behavior.
+    function action_(fn, ok) { return action(fn, ok); }
+
+    function openProfile(id) {
+      const account = accountsData.find((a) => a.id === id);
+      const form = document.createElement("form");
+      form.className = "stack";
+      form.innerHTML = `
+        <div class="grid grid-2">
+          <div class="field"><label>${esc(Fly.t("First name"))}</label><input class="input" name="first_name" value="${esc(account?.name || "")}"></div>
+          <div class="field"><label>${esc(Fly.t("Last name"))}</label><input class="input" name="last_name"></div>
+        </div>
+        <div class="field"><label>${esc(Fly.t("Bio"))}</label><input class="input" name="about" maxlength="70"></div>
+        <div class="field"><label>Username</label><input class="input" name="username" placeholder="@name"><span class="hint">${esc(Fly.t("Leave fields empty to keep them unchanged"))}</span></div>
+        <div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(form).entries());
+        const body = {};
+        for (const [k, v] of Object.entries(data)) if (v.trim() !== "") body[k] = v.trim();
+        if (!Object.keys(body).length) return closeModal();
+        await action(() => Fly.api(`/api/accounts/${id}/profile`, { body }), "Saved").catch(() => {});
+        closeModal();
+        loadAccounts();
+      });
+      openModal(`${account?.name || id} · ${Fly.t("Edit profile")}`, form);
+    }
+
+    $("open-cleanup").addEventListener("click", () => {
+      const accounts = requireSelection();
+      if (accounts) openCleanup(accounts);
+    });
+
+    function openCleanup(accounts) {
+      const host = document.createElement("div");
+      host.className = "stack";
+      const names = accounts.map((id) => accountsData.find((a) => a.id === id)?.name || id).join(", ");
+      const steps = (n) => `<div class="stepper">${["Choose", "Preview", "Confirm"].map((label, i) => `<div class="${i <= n ? "on" : ""}">${i + 1}. ${esc(Fly.t(label))}</div>`).join("")}</div>`;
+      const option = (name, label, checked = false) => `<label class="option"><input type="checkbox" name="${name}" ${checked ? "checked" : ""}>${esc(Fly.t(label))}</label>`;
+
+      function stepChoose() {
+        host.innerHTML = `${steps(0)}
+          <div class="alert warn">${esc(Fly.t("Cleanup cannot be undone. You will see exactly what will be removed before anything happens, and an export is saved first."))}</div>
+          <p class="muted" style="margin:0">${esc(Fly.t("Accounts"))}: <b>${esc(names)}</b></p>
+          <h3>${esc(Fly.t("What to clean"))}</h3>
+          <div class="option-grid">${option("contacts", "Delete contacts")}${option("groups", "Leave groups")}${option("channels", "Leave channels")}${option("private_chats", "Delete private chats")}${option("bots", "Delete bot chats")}</div>
+          <h3>${esc(Fly.t("Filters"))}</h3>
+          <div class="grid grid-2">
+            <div class="field"><label>${esc(Fly.t("Only inactive for at least (days)"))}</label><input class="input" type="number" min="0" name="inactive_days" placeholder="0 = any"></div>
+            <div class="field"><label>${esc(Fly.t("Never touch (IDs or @usernames)"))}</label><input class="input mono" name="keep" placeholder="@friend, -100123456"></div>
+          </div>
+          <div class="option-grid">${option("keep_admin", "Keep chats where I'm admin", true)}${option("keep_pinned", "Keep pinned chats", true)}${option("archived_only", "Only archived chats")}${option("revoke", "Delete private chats for both sides")}</div>
+          <p class="small faint" style="margin:0">${esc(Fly.t("Groups and channels you own are never touched."))}</p>
+          <div class="row"><button class="btn btn-primary" id="cl-preview">${esc(Fly.t("Build preview"))} →</button></div>`;
+        host.querySelector("#cl-preview").addEventListener("click", async () => {
+          const get = (n) => host.querySelector(`[name="${n}"]`);
+          const keep = get("keep").value.split(/[\s,]+/).filter(Boolean);
+          const options = {
+            contacts: get("contacts").checked, groups: get("groups").checked, channels: get("channels").checked,
+            private_chats: get("private_chats").checked, bots: get("bots").checked,
+            revoke: get("revoke").checked, keep_admin: get("keep_admin").checked, keep_pinned: get("keep_pinned").checked,
+            archived_only: get("archived_only").checked,
+            inactive_days: Number(get("inactive_days").value) || null,
+            keep_ids: keep.filter((k) => /^-?\d+$/.test(k)).map(Number),
+            keep_usernames: keep.filter((k) => !/^-?\d+$/.test(k)),
+          };
+          host.innerHTML = `${steps(1)}<div class="progress indeterminate"><div></div></div><p class="muted">${esc(Fly.t("Reading your chats…"))}</p>`;
+          try {
+            const previews = await Fly.api("/api/accounts/cleanup/preview", { body: { accounts, options } });
+            stepPreview(previews);
+          } catch (e) {
+            Fly.toast(e.message, "err");
+            stepChoose();
+          }
+        });
+      }
+
+      function stepPreview(previews) {
+        const total = previews.reduce((sum, p) => sum + (p.total || 0), 0);
+        host.innerHTML = `${steps(1)}
+          ${previews.map((p) => p.error ? `<div class="alert err"><b>${esc(p.name)}</b>: ${esc(p.error)}</div>` : `
+            <div class="card stack" style="box-shadow:none">
+              <div class="row between"><b>${esc(p.name)}</b><span class="badge ${p.total ? "warn" : "ok"}">${p.total} ${esc(Fly.t("items"))}</span></div>
+              <div class="chips">
+                <span class="badge">👤 ${p.contacts.length} ${esc(Fly.t("contacts"))}</span>
+                <span class="badge">💬 ${p.users} ${esc(Fly.t("chats"))}</span>
+                <span class="badge">🤖 ${p.bots} ${esc(Fly.t("bots"))}</span>
+                <span class="badge">👥 ${p.groups} ${esc(Fly.t("groups"))}</span>
+                <span class="badge">📣 ${p.channels} ${esc(Fly.t("channels"))}</span>
+                <span class="badge ok">🛡 ${p.kept} ${esc(Fly.t("kept"))}</span>
+                ${p.owned ? `<span class="badge info">👑 ${p.owned} ${esc(Fly.t("owned, skipped"))}</span>` : ""}
+              </div>
+              <details><summary class="small muted">${esc(Fly.t("Show the list"))}</summary>
+                <div class="code-block" style="max-height:220px;margin-top:8px">${[...p.contacts.map((c) => `👤 ${esc(c.name)}${c.username ? " @" + esc(c.username) : ""}`), ...p.items.map((i) => `${{ user: "💬", bot: "🤖", group: "👥", supergroup: "👥", channel: "📣" }[i.kind] || "•"} ${esc(i.title)}`)].join("\n") || esc(Fly.t("Nothing"))}</div>
+              </details>
+            </div>`).join("")}
+          <div class="row"><button class="btn" id="cl-back">← ${esc(Fly.t("Back"))}</button>
+            <button class="btn btn-primary" id="cl-next" ${total ? "" : "disabled"}>${esc(Fly.t("Continue"))} →</button></div>`;
+        host.querySelector("#cl-back").addEventListener("click", stepChoose);
+        host.querySelector("#cl-next").addEventListener("click", () => stepConfirm(previews.filter((p) => !p.error && p.total), total));
+      }
+
+      function stepConfirm(previews, total) {
+        const word = Fly.lang === "ru" ? "УДАЛИТЬ" : "DELETE";
+        host.innerHTML = `${steps(2)}
+          <div class="alert err"><b>${total}</b> ${esc(Fly.t("items will be removed. This cannot be undone."))}</div>
+          <div class="field"><label>${esc(Fly.t("Type"))} <code>${word}</code> ${esc(Fly.t("to confirm"))}</label><input class="input" id="cl-word" autocomplete="off"></div>
+          <div class="row"><button class="btn" id="cl-back2">← ${esc(Fly.t("Back"))}</button>
+            <button class="btn btn-danger" id="cl-run" disabled>🧹 ${esc(Fly.t("Start cleanup"))}</button></div>`;
+        const input = host.querySelector("#cl-word");
+        const run = host.querySelector("#cl-run");
+        input.addEventListener("input", () => { run.disabled = input.value.trim().toUpperCase() !== word; });
+        host.querySelector("#cl-back2").addEventListener("click", stepChoose);
+        run.addEventListener("click", async () => {
+          run.disabled = true;
+          await action(() => Fly.api("/api/accounts/cleanup/run", { body: { codes: previews.map((p) => p.code) } }), "Task started").catch(() => {});
+          closeModal();
+          showPage("tasks");
+        });
+        input.focus();
+      }
+
+      stepChoose();
+      openModal(`🧹 ${Fly.t("Smart cleanup")}`, host);
+    }
+
+    async function loadJobs() {
+      let jobs;
+      try { jobs = await Fly.api("/api/jobs"); } catch { return; }
+      updateTasksBadge(jobs.filter((j) => j.status === "running").length);
+      const icon = { running: "⏳", done: "✅", failed: "❌", cancelled: "⏹" };
+      const badge = { running: "info", done: "ok", failed: "err", cancelled: "warn" };
+      $("job-list").innerHTML = jobs.map((j) => {
+        const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
+        return `<div class="card job-card">
+          <div class="row between">
+            <div><b>${icon[j.status] || "•"} ${esc(Fly.t(j.title))}</b> <span class="faint small">· ${esc(j.account)} · ${new Date(j.started_ms).toLocaleTimeString()}</span></div>
+            <div class="row"><span class="badge ${badge[j.status]}">${esc(Fly.t(j.status))}</span>
+              ${j.status === "running" ? `<button class="btn btn-sm btn-danger" data-cancel="${j.id}">${esc(Fly.t("Cancel"))}</button>` : ""}</div>
+          </div>
+          <div class="progress ${j.status === "running" && !j.total ? "indeterminate" : ""}"><div style="width:${j.status === "done" ? 100 : pct}%"></div></div>
+          <div class="row between small muted"><span>${j.done}/${j.total || "?"}</span><span>${esc(j.summary || "")}</span></div>
+          ${j.log.length ? `<details ${j.status === "running" ? "open" : ""}><summary class="small muted">${esc(Fly.t("Log"))} (${j.log.length})</summary><div class="job-log">${esc(j.log.slice(-60).join("\n"))}</div></details>` : ""}
+        </div>`;
+      }).join("") || `<div class="empty">${esc(Fly.t("No tasks yet. Start one from the Accounts page."))}</div>`;
+      $("job-list").querySelectorAll("[data-cancel]").forEach((b) => b.addEventListener("click", async () => {
+        await action(() => Fly.api(`/api/jobs/${b.dataset.cancel}/cancel`, { method: "POST" }), "Cancelling").catch(() => {});
+        loadJobs();
+      }));
+    }
+
+    const RULE_TYPES = {
+      schedule: { icon: "🗓", tint: "tint-1", title: "Scheduled message", desc: "Send a message every N minutes or daily at a set time" },
+      away_reply: { icon: "🌙", tint: "tint-4", title: "Away reply", desc: "Reply to private messages during set hours" },
+      forward: { icon: "↪️", tint: "tint-5", title: "Auto-forward", desc: "Forward new messages from one chat to another" },
+      auto_delete: { icon: "🧨", tint: "tint-3", title: "Auto-delete", desc: "Delete your own messages after a delay" },
+      profile_clock: { icon: "🕐", tint: "tint-2", title: "Clock in profile", desc: "Keep the current time in your name or bio" },
+      bio_rotation: { icon: "🔁", tint: "tint-6", title: "Bio rotation", desc: "Cycle your bio through phrases" },
+      presence: { icon: "🟢", tint: "tint-2", title: "Online status", desc: "Always appear online, or always offline" },
+      auto_read: { icon: "👀", tint: "tint-1", title: "Auto-read", desc: "Mark new messages in chosen chats as read" },
+    };
+
+    function describeRule(r) {
+      switch (r.type) {
+        case "schedule": return `${r.every_minutes ? `${Fly.t("every")} ${r.every_minutes} ${Fly.t("min")}` : `${Fly.t("daily")} ${r.at}`} → ${r.chat}`;
+        case "away_reply": return `${r.from}–${r.to}: ${r.text}`;
+        case "forward": return `${r.from_chat} → ${r.to_chat}${r.keywords?.length ? ` (${r.keywords.join(", ")})` : ""}`;
+        case "auto_delete": return `${r.after_minutes} ${Fly.t("min")} · ${r.chats.join(", ")}`;
+        case "profile_clock": return `${r.field}: ${r.template}`;
+        case "bio_rotation": return `${r.phrases.length} ${Fly.t("phrases")} · ${r.every_minutes} ${Fly.t("min")}`;
+        case "presence": return Fly.t(r.online ? "always online" : "always offline");
+        case "auto_read": return r.chats.join(", ");
+        default: return "";
+      }
+    }
+
+    async function loadRules() {
+      let rules;
+      try { rules = await Fly.api("/api/automations"); } catch { return; }
+      rulesCount = rules.length;
+      if (!accountsData.length) { try { accountsData = await Fly.api("/api/accounts"); } catch { /* panel still works */ } }
+      $("rule-list").innerHTML = rules.map((r) => {
+        const type = RULE_TYPES[r.type] || { icon: "•", tint: "tint-1", title: r.type };
+        const who = r.accounts.length ? r.accounts.map((id) => accountsData.find((a) => a.id === id)?.name || id).join(", ") : Fly.t("All accounts");
+        return `<div class="card rule-card hover-lift" data-rule="${esc(r.id)}">
+          <div class="rule-icon ${type.tint}">${type.icon}</div>
+          <div style="flex:1;min-width:0"><b>${esc(r.name)}</b> <span class="badge">${esc(Fly.t(type.title))}</span>
+            <div class="small muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(describeRule(r))}</div>
+            <div class="small faint">👤 ${esc(who)}</div></div>
+          <button class="btn btn-sm" data-edit>✏️</button>
+          <button class="btn btn-sm btn-danger" data-del>🗑</button>
+          <label class="switch"><input type="checkbox" data-toggle-rule ${r.enabled ? "checked" : ""}><span></span></label>
+        </div>`;
+      }).join("") || `<div class="card empty">⚡ ${esc(Fly.t("No rules yet. Create one to automate routine work."))}</div>`;
+      $("rule-list").querySelectorAll("[data-rule]").forEach((card) => {
+        const rule = rules.find((r) => r.id === card.dataset.rule);
+        card.querySelector("[data-edit]").addEventListener("click", () => openRuleEditor(rule.type, rule));
+        card.querySelector("[data-del]").addEventListener("click", async () => {
+          if (!confirm(Fly.t("Delete this rule?"))) return;
+          await action(() => Fly.api(`/api/automations/${encodeURIComponent(rule.id)}`, { method: "DELETE" }), "Saved").catch(() => {});
+          loadRules();
+        });
+        card.querySelector("[data-toggle-rule]").addEventListener("change", async (e) => {
+          await action(() => Fly.api(`/api/automations/${encodeURIComponent(rule.id)}/enabled`, { body: { enabled: e.target.checked } }), "Saved").catch(() => {});
+        });
+      });
+    }
+
+    $("new-rule").addEventListener("click", () => {
+      const host = document.createElement("div");
+      host.className = "type-grid";
+      host.innerHTML = Object.entries(RULE_TYPES).map(([id, t]) => `
+        <button class="type-card" data-type="${id}"><span class="icon">${t.icon}</span><b>${esc(Fly.t(t.title))}</b><span class="small muted">${esc(Fly.t(t.desc))}</span></button>`).join("");
+      host.querySelectorAll("[data-type]").forEach((b) => b.addEventListener("click", () => openRuleEditor(b.dataset.type)));
+      openModal(Fly.t("New rule"), host);
+    });
+
+    function openRuleEditor(type, rule = {}) {
+      const form = document.createElement("form");
+      form.className = "stack";
+      const v = (key, fallback = "") => esc(rule[key] ?? fallback);
+      const field = (label, html, hint = "") => `<div class="field"><label>${esc(Fly.t(label))}</label>${html}${hint ? `<span class="hint">${esc(Fly.t(hint))}</span>` : ""}</div>`;
+      const chatHint = "me, @username, or a chat ID";
+      const listValue = (key) => esc((rule[key] || []).join(", "));
+      const specific = {
+        schedule: `
+          ${field("Chat", `<input class="input mono" name="chat" value="${v("chat", "me")}">`, chatHint)}
+          ${field("Message", `<textarea class="input" name="text">${v("text")}</textarea>`, "Placeholders: {time} {date} {weekday} {clock}")}
+          <div class="grid grid-2">
+            ${field("Every N minutes", `<input class="input" type="number" min="1" name="every_minutes" value="${v("every_minutes")}">`, "Or leave empty and set a time")}
+            ${field("Daily at", `<input class="input" type="time" name="at" value="${v("at")}">`)}
+          </div>
+          ${field("Weekdays", `<div class="row">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => `<label class="option" style="padding:6px 10px"><input type="checkbox" name="day" value="${i + 1}" ${(rule.days || []).includes(i + 1) ? "checked" : ""}>${esc(Fly.t(d))}</label>`).join("")}</div>`, "None selected means every day")}`,
+        away_reply: `
+          ${field("Reply text", `<textarea class="input" name="text">${v("text", "🌙 I'm away right now and will answer later.")}</textarea>`)}
+          <div class="grid grid-3">
+            ${field("From", `<input class="input" type="time" name="from" value="${v("from", "23:00")}">`)}
+            ${field("To", `<input class="input" type="time" name="to" value="${v("to", "08:00")}">`)}
+            ${field("Cooldown, minutes", `<input class="input" type="number" min="1" name="cooldown_minutes" value="${v("cooldown_minutes", 60)}">`)}
+          </div>`,
+        forward: `
+          <div class="grid grid-2">
+            ${field("From chat ID", `<input class="input mono" name="from_chat" value="${v("from_chat")}">`, "Use .id in that chat to see it")}
+            ${field("To chat", `<input class="input mono" name="to_chat" value="${v("to_chat", "me")}">`, chatHint)}
+          </div>
+          ${field("Only messages with these words", `<input class="input" name="keywords" value="${listValue("keywords")}">`, "Comma-separated; empty forwards everything")}`,
+        auto_delete: `
+          ${field("Chat IDs", `<input class="input mono" name="chats" value="${listValue("chats")}">`, "Comma-separated")}
+          ${field("Delete after, minutes", `<input class="input" type="number" min="1" name="after_minutes" value="${v("after_minutes", 60)}">`)}`,
+        profile_clock: `
+          ${field("Where", `<select class="input" name="field"><option value="name" ${rule.field === "name" ? "selected" : ""}>${esc(Fly.t("Name"))}</option><option value="bio" ${rule.field === "bio" ? "selected" : ""}>${esc(Fly.t("Bio"))}</option></select>`)}
+          ${field("Template", `<input class="input" name="template" value="${v("template", "{clock} {time}")}">`, "Placeholders: {time} {date} {weekday} {clock}")}`,
+        bio_rotation: `
+          ${field("Phrases, one per line", `<textarea class="input" name="phrases">${esc((rule.phrases || []).join("\n"))}</textarea>`)}
+          ${field("Change every N minutes", `<input class="input" type="number" min="1" name="every_minutes" value="${v("every_minutes", 60)}">`)}`,
+        presence: `
+          ${field("Status", `<select class="input" name="online"><option value="true" ${rule.online !== false ? "selected" : ""}>${esc(Fly.t("always online"))}</option><option value="false" ${rule.online === false ? "selected" : ""}>${esc(Fly.t("always offline"))}</option></select>`)}`,
+        auto_read: `
+          ${field("Chat IDs", `<input class="input mono" name="chats" value="${listValue("chats")}">`, "Comma-separated")}`,
+      }[type];
+      const offset = rule.utc_offset_minutes ?? -new Date().getTimezoneOffset();
+      form.innerHTML = `
+        ${field("Name", `<input class="input" name="name" value="${v("name", Fly.t(RULE_TYPES[type].title))}">`)}
+        ${specific}
+        ${field("Accounts", `<div class="option-grid">${accountsData.map((a) => `<label class="option"><input type="checkbox" name="account" value="${a.id}" ${(rule.accounts || []).includes(a.id) ? "checked" : ""}>${esc(a.name)}</label>`).join("")}</div>`, "None selected means all accounts")}
+        ${field("Time zone (UTC offset, hours)", `<input class="input" type="number" step="0.5" name="utc_offset" value="${offset / 60}">`)}
+        <div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const get = (n) => form.querySelector(`[name="${n}"]`)?.value ?? "";
+        const ids = (text) => text.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite);
+        const body = {
+          id: rule.id || "", name: get("name"), type, enabled: rule.enabled ?? true,
+          accounts: [...form.querySelectorAll('[name="account"]:checked')].map((el) => Number(el.value)),
+          utc_offset_minutes: Math.round(Number(get("utc_offset")) * 60) || 0,
+        };
+        if (type === "schedule") Object.assign(body, {
+          chat: get("chat"), text: get("text"),
+          every_minutes: get("every_minutes") ? Number(get("every_minutes")) : null,
+          at: get("every_minutes") ? null : (get("at") || null),
+          days: [...form.querySelectorAll('[name="day"]:checked')].map((el) => Number(el.value)),
+        });
+        if (type === "away_reply") Object.assign(body, { text: get("text"), from: get("from"), to: get("to"), cooldown_minutes: Number(get("cooldown_minutes")) || 60 });
+        if (type === "forward") Object.assign(body, { from_chat: Number(get("from_chat")), to_chat: get("to_chat"), keywords: get("keywords").split(",").map((k) => k.trim()).filter(Boolean) });
+        if (type === "auto_delete") Object.assign(body, { chats: ids(get("chats")), after_minutes: Number(get("after_minutes")) });
+        if (type === "profile_clock") Object.assign(body, { field: get("field"), template: get("template") });
+        if (type === "bio_rotation") Object.assign(body, { phrases: get("phrases").split("\n").map((p) => p.trim()).filter(Boolean), every_minutes: Number(get("every_minutes")) });
+        if (type === "presence") Object.assign(body, { online: get("online") === "true" });
+        if (type === "auto_read") Object.assign(body, { chats: ids(get("chats")) });
+        try {
+          await Fly.api("/api/automations", { body });
+          Fly.toast(Fly.t("Saved"), "ok");
+          closeModal();
+          loadRules();
+        } catch (err) {
+          Fly.toast(err.message, "err");
+        }
+      });
+      openModal(`${RULE_TYPES[type].icon} ${Fly.t(RULE_TYPES[type].title)}`, form);
+    }
+
+    function paletteCommands() {
+      const go = (page) => () => showPage(page);
+      const list = [
+        ["📊", "Go to Overview", go("overview")], ["👥", "Go to Accounts", go("accounts")],
+        ["⚡", "Go to Automations", go("automations")], ["📋", "Go to Tasks", go("tasks")],
+        ["🧩", "Go to Modules", go("modules")], ["🧾", "Go to Logs", go("logs")],
+        ["🗑", "Go to Anti-delete", go("antidelete")], ["💾", "Go to Backups", go("backups")],
+        ["⚙️", "Go to Settings", go("settings")],
+        ["🎨", "Appearance", openAppearance],
+        ["⚡", "New automation rule", () => { showPage("automations"); $("new-rule").click(); }],
+        ["🧹", "Smart cleanup", () => { showPage("accounts"); setTimeout(() => $("open-cleanup").click(), 300); }],
+        ["✅", "Read all chats", () => { showPage("accounts"); setTimeout(() => document.querySelector('[data-bulk="read_all"]').click(), 300); }],
+        ["⬆️", "Check for updates", () => { showPage("settings"); $("check-update").click(); }],
+        ["💾", "Download backup", () => { location.href = "/api/backup"; }],
+        ["🔄", "Restart", () => $("btn-restart").click()],
+        ["🚪", "Sign out", () => $("logout").click()],
+      ];
+      for (const [id, label] of [["light", "Light"], ["dark", "Dark"], ["midnight", "Midnight"], ["ocean", "Ocean"], ["dracula", "Dracula"], ["rose", "Rose"]]) {
+        list.push(["🎨", `${Fly.t("Theme")}: ${Fly.t(label)}`, () => Fly.setTheme(id)]);
+      }
+      for (const m of modulesData) {
+        if (m.config.length) list.push(["🧩", `${Fly.t("Configure")}: ${m.name}`, () => { showPage("modules"); openConfig(m); }]);
+      }
+      return list.map(([icon, label, run]) => ({ icon, label: Fly.t(label), run }));
+    }
+
+    function openPalette() {
+      if (document.querySelector(".palette-backdrop")) return;
+      const backdrop = document.createElement("div");
+      backdrop.className = "palette-backdrop";
+      backdrop.innerHTML = `<div class="card palette"><input class="input" placeholder="${esc(Fly.t("Type a command or page…"))}"><div class="palette-list"></div></div>`;
+      document.body.appendChild(backdrop);
+      const input = backdrop.querySelector("input");
+      const listEl = backdrop.querySelector(".palette-list");
+      const all = paletteCommands();
+      let shown = all;
+      let active = 0;
+      const close = () => backdrop.remove();
+      const render = () => {
+        listEl.innerHTML = shown.map((c, i) => `<div class="palette-item ${i === active ? "active" : ""}" data-i="${i}"><span class="icon">${c.icon}</span>${esc(c.label)}${i === active ? '<span class="hint">↵</span>' : ""}</div>`).join("")
+          || `<div class="empty">${esc(Fly.t("Nothing found"))}</div>`;
+        listEl.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+      };
+      input.addEventListener("input", () => {
+        const q = input.value.trim().toLowerCase();
+        shown = all.filter((c) => c.label.toLowerCase().includes(q));
+        active = 0;
+        render();
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown") { active = Math.min(shown.length - 1, active + 1); render(); e.preventDefault(); }
+        if (e.key === "ArrowUp") { active = Math.max(0, active - 1); render(); e.preventDefault(); }
+        if (e.key === "Enter" && shown[active]) { close(); shown[active].run(); }
+        if (e.key === "Escape") close();
+      });
+      listEl.addEventListener("click", (e) => {
+        const item = e.target.closest("[data-i]");
+        if (item) { close(); shown[Number(item.dataset.i)].run(); }
+      });
+      backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+      render();
+      input.focus();
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); }
+    });
+    $("open-palette").addEventListener("click", openPalette);
+
+    syncLangTabs();
+    loadSettings().then(loadStatus);
+    loadProfiles();
+    Fly.api("/api/modules").then((m) => { modulesData = m; }).catch(() => {});
+    Fly.api("/api/automations").then((r) => { rulesCount = r.length; }).catch(() => {});
+    const initial = location.hash.slice(1) || Fly.store.get("fly.page", "overview");
+    showPage(document.getElementById(`page-${initial}`) ? initial : "overview");
+    setInterval(() => {
+      if (document.hidden) return;
+      if (currentPage === "overview") loadStatus();
+      if (currentPage === "logs" && $("log-auto").checked) loadLogs(false);
+      if (currentPage === "tasks") loadJobs();
+    }, 3000);
+  </script>
+</body>
+</html>

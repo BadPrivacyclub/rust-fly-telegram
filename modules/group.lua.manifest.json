@@ -1,0 +1,8 @@
+{
+  "name": "group",
+  "version": "2.0.0",
+  "description": "Group moderation: join cleanup, CAPTCHA, purge, pins, and mentions.",
+  "commands": ["cleanjoins", "captcha", "purge", "pin", "unpin", "tagall"],
+  "permissions": ["telegram.history"],
+  "trusted": true
+}

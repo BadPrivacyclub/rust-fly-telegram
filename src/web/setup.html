@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fly-telegram · Setup</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <style>
+    .step { display: none; }
+    .step.active { display: flex; flex-direction: column; gap: 16px; }
+    .wizard-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }
+    ol.howto { margin: 0; padding-left: 20px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
+    details summary { cursor: pointer; color: var(--text-muted); font-weight: 560; }
+    .done-icon { font-size: 44px; text-align: center; }
+    .code-input { font-size: 22px; letter-spacing: 0.3em; text-align: center; font-family: var(--mono); }
+  </style>
+</head>
+<body>
+  <div class="center-page">
+    <div class="card wizard-card">
+      <div class="row between">
+        <div class="brand" style="padding:0">
+          <div class="brand-logo">✈</div>
+          <div>fly-telegram<small id="mode-title" data-i18n="First-run setup">First-run setup</small></div>
+        </div>
+        <div class="row">
+          <div class="tabs">
+            <button class="tab" data-lang="en" type="button">EN</button>
+            <button class="tab" data-lang="ru" type="button">RU</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="theme" type="button" aria-label="Theme">◐</button>
+        </div>
+      </div>
+
+      <div class="steps" id="progress"></div>
+
+      <!-- Welcome -->
+      <section class="step" data-step="welcome">
+        <h1 data-i18n="Welcome to fly-telegram">Welcome to fly-telegram</h1>
+        <p class="muted" style="margin:0" data-i18n="This wizard connects your Telegram account in a few minutes. Everything stays on this computer.">This wizard connects your Telegram account in a few minutes. Everything stays on this computer.</p>
+        <ol class="howto">
+          <li data-i18n="Protect the panel with a password">Protect the panel with a password</li>
+          <li data-i18n="Optionally connect a control bot">Optionally connect a control bot</li>
+          <li data-i18n="Enter your Telegram API keys">Enter your Telegram API keys</li>
+          <li data-i18n="Sign in with your phone number">Sign in with your phone number</li>
+        </ol>
+      </section>
+
+      <!-- Panel password -->
+      <section class="step" data-step="panel">
+        <h2 data-i18n="Panel password">Panel password</h2>
+        <p class="muted" style="margin:0" data-i18n="You will use it to open this panel. Without a password you can still sign in with a one-time link printed in the console.">You will use it to open this panel. Without a password you can still sign in with a one-time link printed in the console.</p>
+        <div class="field">
+          <label for="pw1" data-i18n="Password">Password</label>
+          <input id="pw1" class="input" type="password" autocomplete="new-password" minlength="6">
+        </div>
+        <div class="field">
+          <label for="pw2" data-i18n="Repeat password">Repeat password</label>
+          <input id="pw2" class="input" type="password" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="prefix" data-i18n="Command prefix">Command prefix</label>
+          <input id="prefix" class="input" value="." maxlength="12">
+          <span class="hint" data-i18n="Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.">Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.</span>
+        </div>
+      </section>
+
+      <!-- Bot -->
+      <section class="step" data-step="bot">
+        <h2 data-i18n="Control bot (optional)">Control bot (optional)</h2>
+        <p class="muted" style="margin:0" data-i18n="A bot sends you notifications and gives you a control menu inside Telegram.">A bot sends you notifications and gives you a control menu inside Telegram.</p>
+        <ol class="howto">
+          <li><span data-i18n="Open">Open</span> <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> <span data-i18n="and send /newbot">and send /newbot</span></li>
+          <li data-i18n="Copy the token it gives you and paste it below">Copy the token it gives you and paste it below</li>
+          <li data-i18n="For help with buttons, also send /setinline to BotFather">For help with buttons, also send /setinline to BotFather</li>
+          <li data-i18n="After setup, press Start in your bot so it can message you">After setup, press Start in your bot so it can message you</li>
+        </ol>
+        <div class="field">
+          <label for="bot-token" data-i18n="Bot token">Bot token</label>
+          <input id="bot-token" class="input mono" placeholder="123456789:AA..." autocomplete="off">
+        </div>
+      </section>
+
+      <!-- API -->
+      <section class="step" data-step="api">
+        <h2 data-i18n="Telegram API keys">Telegram API keys</h2>
+        <ol class="howto">
+          <li><span data-i18n="Open">Open</span> <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a> <span data-i18n="and sign in">and sign in</span></li>
+          <li data-i18n="Create an application (any name)">Create an application (any name)</li>
+          <li data-i18n="Copy api_id and api_hash">Copy api_id and api_hash</li>
+        </ol>
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="api-id">api_id</label>
+            <input id="api-id" class="input mono" inputmode="numeric" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="api-hash">api_hash</label>
+            <input id="api-hash" class="input mono" autocomplete="off">
+          </div>
+        </div>
+        <p id="api-reuse" class="hint hidden" data-i18n="Leave empty to reuse the saved keys.">Leave empty to reuse the saved keys.</p>
+        <details>
+          <summary data-i18n="Proxy (if Telegram is blocked)">Proxy (if Telegram is blocked)</summary>
+          <div class="field" style="margin-top:10px">
+            <label for="proxy">SOCKS5</label>
+            <input id="proxy" class="input mono" placeholder="socks5://user:pass@127.0.0.1:1080">
+            <p class="hint" data-i18n="socks5://127.0.0.1:9050 is treated as Tor: every account gets its own circuit.">socks5://127.0.0.1:9050 is treated as Tor: every account gets its own circuit.</p>
+          </div>
+        </details>
+        <label class="check" style="display:flex;gap:8px;align-items:flex-start;margin-top:14px">
+          <input id="desktop-profiles" type="checkbox" style="margin-top:3px">
+          <span><b data-i18n="Desktop device profiles">Desktop device profiles</b><br>
+            <span class="hint" data-i18n="Each account gets its own generated desktop device (OS, PC name, app version) and keeps it.">Each account gets its own generated desktop device (OS, PC name, app version) and keeps it.</span></span>
+        </label>
+      </section>
+
+      <!-- Phone -->
+      <section class="step" data-step="phone">
+        <h2 data-i18n="Your phone number">Your phone number</h2>
+        <div class="field">
+          <label for="phone" data-i18n="Phone in international format">Phone in international format</label>
+          <input id="phone" class="input" type="tel" placeholder="+1 555 123 4567" autocomplete="tel">
+        </div>
+        <div class="field" id="session-field">
+          <label for="session" data-i18n="Account name (for several accounts)">Account name (for several accounts)</label>
+          <input id="session" class="input" placeholder="work">
+        </div>
+      </section>
+
+      <!-- Code -->
+      <section class="step" data-step="code">
+        <h2 data-i18n="Enter the code">Enter the code</h2>
+        <p class="muted" style="margin:0" data-i18n="Telegram sent a login code to your other devices (or by SMS).">Telegram sent a login code to your other devices (or by SMS).</p>
+        <input id="code" class="input code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="8">
+        <div id="twofa" class="field hidden">
+          <label for="password2fa" data-i18n="Two-step verification password">Two-step verification password</label>
+          <input id="password2fa" class="input" type="password" autocomplete="current-password">
+          <span class="hint" id="hint"></span>
+        </div>
+      </section>
+
+      <!-- Done -->
+      <section class="step" data-step="done">
+        <div class="done-icon">🎉</div>
+        <h2 style="text-align:center" data-i18n="You're all set">You're all set</h2>
+        <p class="muted" style="text-align:center;margin:0" id="done-text" data-i18n="Starting the panel…">Starting the panel…</p>
+        <div class="alert">
+          <b data-i18n="Try it:">Try it:</b> <span data-i18n="send">send</span> <code id="try-cmd">.help</code> <span data-i18n="in any Telegram chat.">in any Telegram chat.</span>
+        </div>
+      </section>
+
+      <div id="error" class="alert err hidden" style="margin-top:14px"></div>
+
+      <div class="wizard-foot" style="margin-top:20px">
+        <button class="btn" id="back" type="button" data-i18n="Back">Back</button>
+        <div class="row">
+          <button class="btn btn-ghost" id="skip" type="button" data-i18n="Skip">Skip</button>
+          <button class="btn btn-primary" id="next" type="button" data-i18n="Next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/common.js"></script>
+  <script>
+    "use strict";
+    Fly.extend({ ru: {
+      "First-run setup": "Первоначальная настройка",
+      "Add account": "Добавить аккаунт",
+      "Welcome to fly-telegram": "Добро пожаловать в fly-telegram",
+      "This wizard connects your Telegram account in a few minutes. Everything stays on this computer.": "Мастер подключит ваш аккаунт Telegram за пару минут. Все данные остаются на этом компьютере.",
+      "Protect the panel with a password": "Задайте пароль панели",
+      "Optionally connect a control bot": "При желании подключите бота-пульт",
+      "Enter your Telegram API keys": "Введите API-ключи Telegram",
+      "Sign in with your phone number": "Войдите по номеру телефона",
+      "You will use it to open this panel. Without a password you can still sign in with a one-time link printed in the console.": "Он нужен для входа в эту панель. Без пароля можно входить по одноразовой ссылке из консоли.",
+      "Password": "Пароль",
+      "Repeat password": "Повторите пароль",
+      "Command prefix": "Префикс команд",
+      "Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.": "Команды начинаются с этого символа, например .help. Несколько префиксов — через пробел.",
+      "Control bot (optional)": "Бот-пульт (необязательно)",
+      "A bot sends you notifications and gives you a control menu inside Telegram.": "Бот присылает уведомления и даёт меню управления прямо в Telegram.",
+      "Open": "Откройте",
+      "and send /newbot": "и отправьте /newbot",
+      "Copy the token it gives you and paste it below": "Скопируйте выданный токен и вставьте ниже",
+      "For help with buttons, also send /setinline to BotFather": "Для справки с кнопками отправьте BotFather ещё /setinline",
+      "After setup, press Start in your bot so it can message you": "После настройки нажмите Start в своём боте, чтобы он мог вам писать",
+      "Telegram API keys": "API-ключи Telegram",
+      "and sign in": "и войдите",
+      "Create an application (any name)": "Создайте приложение (название любое)",
+      "Copy api_id and api_hash": "Скопируйте api_id и api_hash",
+      "Leave empty to reuse the saved keys.": "Оставьте пустым, чтобы использовать сохранённые ключи.",
+      "Proxy (if Telegram is blocked)": "Прокси (если Telegram заблокирован)",
+      "socks5://127.0.0.1:9050 is treated as Tor: every account gets its own circuit.": "socks5://127.0.0.1:9050 считается Tor: у каждого аккаунта своя цепочка.",
+      "Desktop device profiles": "Профили desktop-устройств",
+      "Each account gets its own generated desktop device (OS, PC name, app version) and keeps it.": "Каждый аккаунт получает свой сгенерированный desktop-профиль (ОС, имя ПК, версия приложения) и сохраняет его.",
+      "Your phone number": "Ваш номер телефона",
+      "Phone in international format": "Телефон в международном формате",
+      "Account name (for several accounts)": "Имя аккаунта (для нескольких аккаунтов)",
+      "Enter the code": "Введите код",
+      "Telegram sent a login code to your other devices (or by SMS).": "Telegram отправил код входа на ваши устройства (или по SMS).",
+      "Two-step verification password": "Пароль двухэтапной аутентификации",
+      "You're all set": "Готово!",
+      "Starting the panel…": "Запускаем панель…",
+      "Account added. It connects in a few seconds.": "Аккаунт добавлен и подключится через несколько секунд.",
+      "Try it:": "Попробуйте:",
+      "send": "отправьте",
+      "in any Telegram chat.": "в любом чате Telegram.",
+      "Passwords do not match": "Пароли не совпадают",
+      "Password must be at least 6 characters": "Пароль должен быть не короче 6 символов",
+      "Fill in api_id and api_hash": "Заполните api_id и api_hash",
+      "Hint:": "Подсказка:",
+      "Open the panel": "Открыть панель",
+    }});
+
+    const $ = (id) => document.getElementById(id);
+    let mode = "setup";
+    let steps = ["welcome", "panel", "bot", "api", "phone", "code", "done"];
+    let index = 0;
+    let needPassword = false;
+    let busy = false;
+
+    function syncLangTabs() {
+      document.querySelectorAll("[data-lang]").forEach((el) => el.classList.toggle("active", el.dataset.lang === Fly.lang));
+    }
+    document.querySelectorAll("[data-lang]").forEach((el) => el.addEventListener("click", () => {
+      Fly.setLang(el.dataset.lang);
+      syncLangTabs();
+      render();
+    }));
+    $("theme").addEventListener("click", () => Fly.cycleTheme());
+
+    function showError(message) {
+      const box = $("error");
+      if (!message) { box.classList.add("hidden"); return; }
+      box.textContent = Fly.t(message);
+      box.classList.remove("hidden");
+    }
+
+    function render() {
+      const current = steps[index];
+      document.querySelectorAll(".step").forEach((el) => el.classList.toggle("active", el.dataset.step === current));
+      $("progress").innerHTML = steps.slice(0, -1).map((_, i) => `<div class="${i <= index ? "done" : ""}"></div>`).join("");
+      $("back").style.visibility = index === 0 || current === "done" || current === "code" && busy ? "hidden" : "visible";
+      $("skip").classList.toggle("hidden", !(current === "panel" || current === "bot"));
+      $("next").classList.toggle("hidden", current === "done");
+      const labels = { phone: "Send code", code: "Sign in" };
+      $("next").textContent = Fly.t(labels[current] || "Next");
+      $("next").disabled = busy;
+      const focus = { panel: "pw1", bot: "bot-token", api: "api-id", phone: "phone", code: needPassword ? "password2fa" : "code" }[current];
+      if (focus) setTimeout(() => $(focus).focus(), 30);
+    }
+
+    async function withBusy(fn) {
+      busy = true; render(); showError("");
+      try { await fn(); }
+      catch (e) { showError(e.message); }
+      finally { busy = false; render(); }
+    }
+
+    async function next(skip) {
+      const current = steps[index];
+      if (current === "panel" && !skip) {
+        const pw1 = $("pw1").value, pw2 = $("pw2").value;
+        if (pw1 || pw2) {
+          if (pw1.length < 6) return showError("Password must be at least 6 characters");
+          if (pw1 !== pw2) return showError("Passwords do not match");
+        }
+        return withBusy(async () => {
+          await Fly.api("/api/setup/prefs", { body: { panel_password: pw1 || null, prefix: $("prefix").value, language: Fly.lang } });
+          index++;
+        });
+      }
+      if (current === "bot" && !skip && $("bot-token").value.trim()) {
+        return withBusy(async () => {
+          await Fly.api("/api/setup/prefs", { body: { bot_token: $("bot-token").value.trim() } });
+          index++;
+        });
+      }
+      if (current === "api") {
+        const reuse = !$("api-reuse").classList.contains("hidden");
+        if (!reuse && (!$("api-id").value.trim() || !$("api-hash").value.trim())) {
+          return showError("Fill in api_id and api_hash");
+        }
+      }
+      if (current === "phone") {
+        return withBusy(async () => {
+          await Fly.api("/send_code", { body: {
+            api_id: $("api-id").value.trim(),
+            api_hash: $("api-hash").value.trim(),
+            proxy_url: $("proxy").value.trim(),
+            desktop_profiles: $("desktop-profiles").checked,
+            phone: $("phone").value.trim(),
+            session_name: mode === "account" ? $("session").value.trim() : "",
+          }});
+          index++;
+        });
+      }
+      if (current === "code") {
+        return withBusy(async () => {
+          const result = await Fly.api("/sign_in", { body: { code: $("code").value.trim(), password: $("password2fa").value } });
+          if (result.need_password) {
+            needPassword = true;
+            $("twofa").classList.remove("hidden");
+            $("hint").textContent = result.password_hint ? `${Fly.t("Hint:")} ${result.password_hint}` : "";
+            return;
+          }
+          index++;
+          finish();
+        });
+      }
+      showError("");
+      index = Math.min(index + 1, steps.length - 1);
+      render();
+    }
+
+    function finish() {
+      if (mode === "account") {
+        $("done-text").textContent = Fly.t("Account added. It connects in a few seconds.");
+        const link = document.createElement("a");
+        link.className = "btn btn-primary";
+        link.href = "/";
+        link.textContent = Fly.t("Open the panel");
+        $("done-text").after(link);
+        return;
+      }
+      // The setup server stops after sign-in and the dashboard starts on the same port.
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const res = await fetch("/api/status", { credentials: "same-origin" });
+          if (res.ok) { location.href = "/"; return; }
+        } catch { /* server restarting */ }
+        if (Date.now() - started < 60000) setTimeout(poll, 1000);
+      };
+      setTimeout(poll, 1500);
+    }
+
+    $("next").addEventListener("click", () => next(false));
+    $("skip").addEventListener("click", () => next(true));
+    $("back").addEventListener("click", () => { showError(""); index = Math.max(0, index - 1); render(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !busy && steps[index] !== "done") { e.preventDefault(); next(false); }
+    });
+
+    (async () => {
+      syncLangTabs();
+      try {
+        const state = await Fly.api("/api/setup/state");
+        mode = state.mode;
+        if (state.prefix) $("prefix").value = state.prefix;
+        $("try-cmd").textContent = (state.prefix || ".") + "help";
+        if (state.has_api) {
+          $("api-id").placeholder = String(state.api_id || "");
+          $("api-reuse").classList.remove("hidden");
+        }
+        if (state.proxy_url) $("proxy").value = state.proxy_url;
+        $("desktop-profiles").checked = !!state.desktop_profiles;
+        if (mode === "account") {
+          steps = ["api", "phone", "code", "done"];
+          $("mode-title").textContent = Fly.t("Add account");
+          $("mode-title").removeAttribute("data-i18n");
+        } else {
+          $("session-field").classList.add("hidden");
+          if (state.panel_password_set) steps = steps.filter((s) => s !== "panel");
+          if (state.bot_configured) steps = steps.filter((s) => s !== "bot");
+        }
+      } catch (e) {
+        showError(e.message);
+      }
+      render();
+    })();
+  </script>
+</body>
+</html>

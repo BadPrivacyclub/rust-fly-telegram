@@ -1,0 +1,8 @@
+{
+  "name": "welcome",
+  "version": "1.0.0",
+  "description": "Greets new members in chosen groups.",
+  "commands": ["welcome"],
+  "permissions": ["telegram.read"],
+  "trusted": true
+}

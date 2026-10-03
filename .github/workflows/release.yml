@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="fly-telegram-${{ matrix.target }}"
+          out="target/${{ matrix.target }}/release"
+          mkdir -p "dist/$name"
+          cp "$out/fly-telegram" "$out/music-worker" README.md LICENSE START-HERE.txt "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+          # The bare executable is what `.update` downloads for self-update.
+          cp "$out/fly-telegram" "dist/$name"
+          ls -la dist
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "fly-telegram-${{ matrix.target }}"
+          $out = "target/${{ matrix.target }}/release"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "$out/fly-telegram.exe", "$out/music-worker.exe", README.md, LICENSE, START-HERE.txt "dist/$name/"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          Copy-Item "$out/fly-telegram.exe" "dist/$name.exe"
+          Remove-Item -Recurse -Force "dist/$name"
+          Get-ChildItem dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > sha256sums.txt
+          cat sha256sums.txt
+      - name: Release notes
+        run: |
+          version="${TAG#v}"
+          # Use this version's CHANGELOG section when present.
+          awk -v v="$version" '
+            /^## / { if (found) exit; if (index($0, v)) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md || true
+          if [ ! -s notes.md ]; then echo "fly-telegram $TAG" > notes.md; fi
+          cat >> notes.md <<'NOTES'
+
+          ### Install
+
+          Linux / macOS:
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/BadPrivacyclub/rust-fly-telegram/main/install.sh | bash
+          ```
+
+          Windows (PowerShell):
+          ```powershell
+          irm https://raw.githubusercontent.com/BadPrivacyclub/rust-fly-telegram/main/install.ps1 | iex
+          ```
+
+          Or download the archive for your system below, unpack it, and run `fly-telegram`
+          (double-click `fly-telegram.exe` on Windows). The setup wizard opens in your browser.
+          NOTES
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
+

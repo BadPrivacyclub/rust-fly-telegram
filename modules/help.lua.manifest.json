@@ -1,0 +1,8 @@
+{
+  "name": "help",
+  "version": "2.0.0",
+  "description": "Command reference generated from installed modules.",
+  "commands": ["help"],
+  "permissions": [],
+  "trusted": true
+}

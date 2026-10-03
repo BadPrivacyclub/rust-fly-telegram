@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fly-telegram · Sign in</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="center-page">
+    <div class="card auth-card stack">
+      <div class="brand" style="padding:0">
+        <div class="brand-logo">✈</div>
+        <div>fly-telegram<small>Control panel</small></div>
+      </div>
+
+      <div id="expired" class="alert warn hidden" data-i18n="The login link has expired or was already used."></div>
+
+      <form id="login" class="stack">
+        <div class="field">
+          <label for="password" data-i18n="Panel password">Panel password</label>
+          <input id="password" class="input" type="password" autocomplete="current-password" autofocus>
+        </div>
+        <div id="error" class="alert err hidden"></div>
+        <button class="btn btn-primary btn-block" type="submit" data-i18n="Sign in">Sign in</button>
+      </form>
+
+      <p class="muted small" style="margin:0">
+        <span data-i18n="Open the one-time login link printed in the console, or send">Open the one-time login link printed in the console, or send</span>
+        <code>.panel</code>
+        <span data-i18n="in any Telegram chat to receive a fresh link.">in any Telegram chat to receive a fresh link.</span>
+      </p>
+
+      <div class="row between small">
+        <div class="tabs">
+          <button class="tab" data-lang="en" type="button">EN</button>
+          <button class="tab" data-lang="ru" type="button">RU</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="theme" type="button">◐ <span data-i18n="Theme">Theme</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/common.js"></script>
+  <script>
+    "use strict";
+    const params = new URLSearchParams(location.search);
+    if (params.has("expired")) document.getElementById("expired").classList.remove("hidden");
+
+    function syncLangTabs() {
+      document.querySelectorAll("[data-lang]").forEach((el) =>
+        el.classList.toggle("active", el.dataset.lang === Fly.lang));
+    }
+    document.querySelectorAll("[data-lang]").forEach((el) =>
+      el.addEventListener("click", () => { Fly.setLang(el.dataset.lang); syncLangTabs(); }));
+    syncLangTabs();
+    document.getElementById("theme").addEventListener("click", () => Fly.cycleTheme());
+
+    document.getElementById("login").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const error = document.getElementById("error");
+      error.classList.add("hidden");
+      try {
+        await Fly.api("/auth/login", { body: { password: document.getElementById("password").value } });
+        location.href = "/";
+      } catch (e) {
+        error.textContent = Fly.t(e.message === "wrong password" ? "Wrong password" : e.message);
+        error.classList.remove("hidden");
+      }
+    });
+  </script>
+</body>
+</html>
