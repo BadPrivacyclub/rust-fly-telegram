@@ -1,0 +1,8 @@
+{
+  "name": "persona",
+  "version": "1.0.0",
+  "description": "Generated personas: swap name, username, bio and public photo, then restore everything.",
+  "commands": ["persona", "unpersona"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

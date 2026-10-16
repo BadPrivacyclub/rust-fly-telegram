@@ -1,0 +1,8 @@
+{
+  "name": "market",
+  "version": "2.0.0",
+  "description": "Browse and install modules from a JSON catalog.",
+  "commands": ["market"],
+  "permissions": ["network", "modules.install"],
+  "trusted": true
+}

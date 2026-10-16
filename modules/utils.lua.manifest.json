@@ -1,0 +1,8 @@
+{
+  "name": "utils",
+  "version": "1.0.0",
+  "description": "Weather, currency conversion, QR codes, calculator, and paste helpers.",
+  "commands": ["weather", "cur", "qr", "calc", "paste"],
+  "permissions": ["network", "telegram.media"],
+  "trusted": true
+}

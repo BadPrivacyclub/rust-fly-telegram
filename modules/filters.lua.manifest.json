@@ -1,0 +1,8 @@
+{
+  "name": "filters",
+  "version": "1.0.0",
+  "description": "Automatic replies to keywords, per chat.",
+  "commands": ["filter", "unfilter", "filters"],
+  "permissions": ["telegram.read"],
+  "trusted": true
+}

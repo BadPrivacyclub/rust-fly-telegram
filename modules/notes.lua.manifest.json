@@ -1,0 +1,8 @@
+{
+  "name": "notes",
+  "version": "2.0.0",
+  "description": "Named notes stored in the local database.",
+  "commands": ["note", "notes"],
+  "permissions": [],
+  "trusted": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "reminders",
+  "version": "1.0.0",
+  "description": "Reminders and delayed messages using Telegram scheduled messages.",
+  "commands": ["remind", "later"],
+  "permissions": [],
+  "trusted": true
+}

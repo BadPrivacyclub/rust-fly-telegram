@@ -1,0 +1,8 @@
+{
+  "name": "extras",
+  "version": "1.0.0",
+  "description": "Coin, dice, random picks, countdown, world clock, passwords, Base64, SHA-256, UUID, link shortener, IDs.",
+  "commands": ["coin", "dice", "random", "countdown", "time", "pass", "b64", "hash", "uuid", "short", "id"],
+  "permissions": ["network"],
+  "trusted": true
+}

@@ -1,0 +1,8 @@
+{
+  "name": "emoji",
+  "version": "1.0.0",
+  "description": "Premium emoji in userbot replies: icon pack, per-icon ids, and an id finder.",
+  "commands": ["emoji"],
+  "permissions": ["core.admin"],
+  "trusted": true
+}

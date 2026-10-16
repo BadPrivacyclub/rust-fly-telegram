@@ -1,0 +1,8 @@
+{
+  "name": "osint",
+  "version": "2.0.0",
+  "description": "IP geolocation, DNS records, and RDAP lookups.",
+  "commands": ["ip", "domain", "rdap"],
+  "permissions": ["network"],
+  "trusted": true
+}
