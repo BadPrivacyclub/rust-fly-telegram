@@ -7,9 +7,15 @@ use grammers_client::update::Message;
 use grammers_client::Client;
 
 use super::{AccountSnapshot, ChatSnapshot};
+use crate::crypto;
 
 pub(super) const MEDIA_DIR: &str = "data/deleted_media";
 const MEDIA_DOWNLOAD_TIMEOUT_SECS: u64 = 45;
+/// Files waiting to be uploaded to the archive channel; they leave this folder within minutes.
+const PENDING_DIR: &str = "pending";
+const SEALED_SUFFIX: &str = ".enc";
+/// A file changed more recently than this may still be downloading.
+const SETTLED_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub(super) struct MediaSnapshot {
     pub(super) media_type: Option<String>,
@@ -23,13 +29,14 @@ pub(super) async fn snapshot_media(
     chat: &ChatSnapshot,
     msg: &Message,
     download: bool,
+    key: Option<&[u8; 32]>,
 ) -> MediaSnapshot {
     let Some(media) = msg.media() else {
         return empty_media_snapshot();
     };
     let media_info = describe_media(&media);
     let media_path = match media_download_path(account, chat, msg.id(), &media_info) {
-        Some(path) if download => download_message_media(msg, &path).await,
+        Some(path) if download => download_message_media(msg, &path, key).await,
         _ => None,
     };
 
@@ -52,11 +59,94 @@ pub(super) async fn download_for_archive(
         return None;
     }
     let path = Path::new(MEDIA_DIR)
-        .join("pending")
+        .join(PENDING_DIR)
         .join(safe_component(&account.id))
         .join(safe_component(&msg.peer_id().to_string()))
         .join(format!("{}.{}", msg.id(), info.extension));
-    download_message_media(msg, &path).await
+    // The channel upload needs the plain file, so this one stays as it is until it leaves.
+    download_message_media(msg, &path, None).await
+}
+
+fn sealed_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(SEALED_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// I replace a plain file with its encrypted copy. The archive keeps recording the plain path.
+async fn seal_file(path: &Path, key: &[u8; 32]) -> Result<()> {
+    let plain = tokio::fs::read(path).await?;
+    let sealed = crypto::seal_bytes(&plain, key)?;
+    crate::storage::atomic_write(&sealed_path(path), &sealed).await?;
+    tokio::fs::remove_file(path).await?;
+    Ok(())
+}
+
+/// I accept only files under the media folder: the path comes from a request or the archive.
+fn is_media_path(path: &Path) -> bool {
+    path.starts_with(MEDIA_DIR)
+        && !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+}
+
+pub(super) async fn read(path: &str, key: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+    let path = PathBuf::from(path.replace('\\', "/"));
+    if !is_media_path(&path) {
+        return Ok(None);
+    }
+    let sealed = sealed_path(&path);
+    if sealed.exists() {
+        return Ok(Some(crypto::open_bytes(
+            &tokio::fs::read(sealed).await?,
+            key,
+        )?));
+    }
+    if path.is_file() {
+        return Ok(Some(tokio::fs::read(path).await?));
+    }
+    Ok(None)
+}
+
+pub(super) async fn remove(path: &str) {
+    let path = PathBuf::from(path.replace('\\', "/"));
+    if is_media_path(&path) {
+        let _ = tokio::fs::remove_file(sealed_path(&path)).await;
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+}
+
+/// I encrypt the plain files older versions left in the media folder.
+pub(super) async fn seal_existing(key: &[u8; 32]) {
+    let mut folders = vec![PathBuf::from(MEDIA_DIR)];
+    while let Some(folder) = folders.pop() {
+        let Ok(mut entries) = tokio::fs::read_dir(&folder).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata().await else {
+                continue;
+            };
+            if meta.is_dir() {
+                if entry.file_name() != PENDING_DIR {
+                    folders.push(path);
+                }
+                continue;
+            }
+            let settled = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.elapsed().ok())
+                .is_some_and(|age| age >= SETTLED_AFTER);
+            let plain = !entry.file_name().to_string_lossy().ends_with(SEALED_SUFFIX);
+            if meta.is_file() && plain && settled {
+                if let Err(error) = seal_file(&path, key).await {
+                    tracing::warn!("could not encrypt {path:?}: {error:#}");
+                }
+            }
+        }
+    }
 }
 
 pub(super) async fn download_avatar(
@@ -190,8 +280,12 @@ fn media_download_path(
     )
 }
 
-async fn download_message_media(msg: &Message, path: &Path) -> Option<String> {
-    if path.exists() {
+async fn download_message_media(
+    msg: &Message,
+    path: &Path,
+    key: Option<&[u8; 32]>,
+) -> Option<String> {
+    if path.exists() || sealed_path(path).exists() {
         return Some(path.to_string_lossy().to_string());
     }
 
@@ -206,6 +300,13 @@ async fn download_message_media(msg: &Message, path: &Path) -> Option<String> {
     .await
     .ok()?
     .ok()?;
+    if result {
+        if let Some(key) = key {
+            if let Err(error) = seal_file(path, key).await {
+                tracing::warn!("could not encrypt {path:?}: {error:#}");
+            }
+        }
+    }
 
     result.then(|| path.to_string_lossy().to_string())
 }
@@ -233,6 +334,32 @@ fn safe_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_files_in_the_media_folder_are_served() {
+        assert!(is_media_path(Path::new("data/deleted_media/1/2/3.jpg")));
+        assert!(!is_media_path(Path::new("database.json")));
+        assert!(!is_media_path(Path::new(
+            "data/deleted_media/../../database.json"
+        )));
+        assert!(!is_media_path(Path::new("/etc/passwd")));
+    }
+
+    #[tokio::test]
+    async fn stored_media_is_encrypted_and_reads_back() {
+        let dir = std::env::temp_dir().join(format!("fly_media_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1.jpg");
+        std::fs::write(&path, b"picture bytes").unwrap();
+        let key = crypto::random_key();
+
+        seal_file(&path, &key).await.unwrap();
+        assert!(!path.exists());
+        let sealed = std::fs::read(sealed_path(&path)).unwrap();
+        assert!(!sealed.windows(7).any(|w| w == b"picture"));
+        assert_eq!(crypto::open_bytes(&sealed, &key).unwrap(), b"picture bytes");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn safe_component_rejects_path_chars() {

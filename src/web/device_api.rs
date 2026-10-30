@@ -113,7 +113,10 @@ pub async fn add_custom(State(state): State<AppState>, Json(body): Json<Profile>
 pub async fn remove_custom(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     match device_profile::remove_custom(state.db(), &id).await {
         Ok(true) => api_ok(),
-        Ok(false) => api_error(StatusCode::NOT_FOUND, "this profile is no longer in the list"),
+        Ok(false) => api_error(
+            StatusCode::NOT_FOUND,
+            "this profile is no longer in the list",
+        ),
         Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
@@ -130,7 +133,7 @@ pub async fn assign(State(state): State<AppState>, Json(body): Json<AssignReques
     let db = state.db();
     let known = crate::client::auth::session_files(db).await;
     let session = body.session.trim().replace('\\', "/");
-    if !known.iter().any(|s| *s == session) {
+    if !known.contains(&session) {
         return api_error(StatusCode::NOT_FOUND, "unknown account session");
     }
     let resolved = match device_profile::resolve(db, body.choice).await {

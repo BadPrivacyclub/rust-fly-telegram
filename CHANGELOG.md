@@ -35,6 +35,37 @@
   v.<version>`.
 - Access keys record their provider as `Fly-Telegram v.<version>`, shown in Session recovery.
 
+- **Account log out** (Accounts → Sessions): signs an account out of Telegram and deletes its
+  session file, optionally with its access key, archive, rules, and exports. The same window
+  lists the account's Active sessions and ends one or all others.
+- **Panel sessions** (Settings): the signed-in browsers, with "End" and "Sign out everywhere else".
+- **Anti-delete retention and clearing**: a keep period (off by default) and "Clear the archive".
+
+### Security
+
+- Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request
+  line or a log, and the page removes it from the history. `GET /auth/token` is gone.
+- Panel sessions end after 12 hours without use; a login replaces the session the browser had,
+  and changing the panel password ends the others. Cross-site requests are refused by
+  `Sec-Fetch-Site` as well.
+- Sandboxed modules get their own copies of `string`, `table`, `ui`, and the other libraries, so
+  they can no longer change what trusted modules call. They can't read `string.dump`, the keys of
+  recovery, anti-delete, personas, device profiles, exports, or handlers, `TELOXIDE_TOKEN` or
+  `FLY_MASTER_PASSWORD`, and may send only files from `data/downloads/`. Lua memory is capped at 1 GiB.
+- Granting permissions that together can carry data off the computer needs a confirmation,
+  enforced by the server.
+- API hash, phone, proxy, bot token, and module settings are sealed in `database.json` with a key
+  in `database.json.key`, which backups leave out. The database and session files are `0600`.
+  This protects a copied database; a full compromise of the data folder needs the master password.
+- Log lines are masked in the panel and on the console: tokens, passwords, API hashes, proxy
+  logins, session ids, and string sessions.
+- The anti-delete database and media are always encrypted on disk, and media of messages that
+  were not deleted is removed when it leaves the cache. Older plain files are encrypted within
+  the hour.
+- Self-update refuses a version that isn't newer, requires `sha256sums.txt`, and verifies a
+  release signature once `assets/release-signing.pub` holds a key (`docs/RELEASE-SIGNING.md`).
+- Removing the control bot now also ignores a token left in `TELOXIDE_TOKEN`.
+
 ### Changes
 
 - Module HTTP requests (persona pictures included) go through the SOCKS5 proxy from the

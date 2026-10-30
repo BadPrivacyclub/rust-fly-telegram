@@ -21,6 +21,82 @@ pub const KNOWN_PERMISSIONS: &[&str] = &[
     "core.admin",
 ];
 
+/// Permissions that are fine alone but together let a module take something from this computer
+/// or account and send it elsewhere.
+const RISKY_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "secrets",
+        "network",
+        "It can read your secrets and send them to any server.",
+    ),
+    (
+        "shell",
+        "network",
+        "It can run any command and exchange data with any server.",
+    ),
+    (
+        "shell",
+        "secrets",
+        "It can read your secrets and pass them to any command.",
+    ),
+    (
+        "core.admin",
+        "network",
+        "It can create a panel login link and send it to any server.",
+    ),
+    (
+        "telegram.read",
+        "network",
+        "It can read your incoming messages and send them to any server.",
+    ),
+    (
+        "telegram.history",
+        "network",
+        "It can read your chat history and send it to any server.",
+    ),
+    (
+        "telegram.media",
+        "network",
+        "It can send downloaded files to any server.",
+    ),
+    (
+        "modules.install",
+        "network",
+        "It can download new code and install it.",
+    ),
+];
+
+/// The module asked for a combination the owner must confirm.
+#[derive(Debug)]
+pub struct RiskyPermissions {
+    pub risks: Vec<String>,
+}
+
+impl std::fmt::Display for RiskyPermissions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.risks.join(" "))
+    }
+}
+
+impl std::error::Error for RiskyPermissions {}
+
+fn pair_risks(permissions: &[String]) -> impl Iterator<Item = &'static str> + '_ {
+    let has = |name: &str| permissions.iter().any(|p| p == name);
+    RISKY_PAIRS
+        .iter()
+        .filter(move |(a, b, _)| has(a) && has(b))
+        .map(|(_, _, risk)| *risk)
+}
+
+/// I name the risks `next` adds to `current`, so saving an unchanged list asks nothing.
+pub fn new_risks(current: &[String], next: &[String]) -> Vec<String> {
+    let known = pair_risks(current).collect::<Vec<_>>();
+    pair_risks(next)
+        .filter(|risk| !known.contains(risk))
+        .map(str::to_string)
+        .collect()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModuleManifest {
     pub name: String,
@@ -773,7 +849,7 @@ mod tests {
             function ctx:module_config_set(n, k, v) return "on" end
             function ctx:sudo_list()     return { 1 } end
             function ctx:sudo_set(v)     end
-            function ctx:panel_link()    return "http://127.0.0.1:8080/auth/token?t=x" end
+            function ctx:panel_link()    return "http://127.0.0.1:8080/auth#t=x" end
             function ctx:restart()       end
             function ctx:check_update()  return { current = "0.2.0", latest = "0.3.0", newer = true, notes = "n", url = "u", has_binary = true, source_checkout = false } end
             function ctx:self_update()   return true end

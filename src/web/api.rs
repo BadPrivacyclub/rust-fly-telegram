@@ -3,14 +3,14 @@
 use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{auth, AppState};
 use crate::config::{db_key, SOCKS5_SCHEME};
-use crate::core_settings::{self, key, TOGGLES};
+use crate::core_settings::{self, TOGGLES};
 use crate::i18n::{self, Lang};
 
 pub fn api_ok() -> Response {
@@ -48,6 +48,7 @@ fn with_session_cookie(mut response: Response, session: &str) -> Response {
 
 pub async fn auth_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<PanelLoginRequest>,
 ) -> Response {
     let panel_auth = &state.services.panel_auth;
@@ -67,26 +68,27 @@ pub async fn auth_login(
         panel_auth.record_failed_login().await;
         return api_error(StatusCode::UNAUTHORIZED, "wrong password");
     }
-    let session = panel_auth.create_session().await;
+    let session = panel_auth.rotate_session(&headers).await;
     with_session_cookie(api_ok(), &session)
 }
 
 #[derive(Deserialize)]
-pub struct TokenQuery {
-    #[serde(default)]
-    t: String,
+pub struct TokenRequest {
+    token: String,
 }
 
+/// The login page sends me the token from the URL fragment; it never appears in a request line.
 pub async fn auth_token(
     State(state): State<AppState>,
-    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+    Json(body): Json<TokenRequest>,
 ) -> Response {
     let panel_auth = &state.services.panel_auth;
-    if !panel_auth.redeem_token(query.t.trim()).await {
-        return Redirect::to("/auth?expired=1").into_response();
+    if !panel_auth.redeem_token(body.token.trim()).await {
+        return api_error(StatusCode::UNAUTHORIZED, "link expired");
     }
-    let session = panel_auth.create_session().await;
-    with_session_cookie(Redirect::to("/").into_response(), &session)
+    let session = panel_auth.rotate_session(&headers).await;
+    with_session_cookie(api_ok(), &session)
 }
 
 pub async fn auth_logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -98,6 +100,36 @@ pub async fn auth_logout(State(state): State<AppState>, headers: HeaderMap) -> R
         .headers_mut()
         .insert(header::SET_COOKIE, auth::clear_cookie());
     response
+}
+
+pub async fn panel_sessions(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let current = auth::session_from_headers(&headers);
+    let panel_auth = &state.services.panel_auth;
+    Json(panel_auth.list_sessions(current.as_deref()).await).into_response()
+}
+
+pub async fn revoke_panel_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if state.services.panel_auth.revoke_by_public_id(&id).await {
+        api_ok()
+    } else {
+        api_error(StatusCode::NOT_FOUND, "no such session")
+    }
+}
+
+pub async fn revoke_other_panel_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let current = auth::session_from_headers(&headers);
+    let ended = state
+        .services
+        .panel_auth
+        .revoke_others(current.as_deref())
+        .await;
+    Json(json!({ "ok": true, "ended": ended })).into_response()
 }
 
 pub async fn status(State(state): State<AppState>) -> Response {
@@ -203,6 +235,8 @@ pub async fn set_module_config(
 #[derive(Deserialize)]
 pub struct PermissionsRequest {
     permissions: Vec<String>,
+    #[serde(default)]
+    confirm_risky: bool,
 }
 
 pub async fn set_module_permissions(
@@ -211,9 +245,24 @@ pub async fn set_module_permissions(
     Json(body): Json<PermissionsRequest>,
 ) -> Response {
     let loader = try_loader!(state);
-    match loader.set_permissions(&name, body.permissions).await {
+    let result = loader
+        .set_permissions(&name, body.permissions, body.confirm_risky)
+        .await;
+    match result {
         Ok(()) => api_ok(),
-        Err(error) => api_error(StatusCode::BAD_REQUEST, format!("{error:#}")),
+        Err(error) => match error.downcast_ref::<crate::loader::manifest::RiskyPermissions>() {
+            Some(risky) => (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "ok": false,
+                    "error": error.to_string(),
+                    "needs_confirm": true,
+                    "risks": risky.risks,
+                })),
+            )
+                .into_response(),
+            None => api_error(StatusCode::BAD_REQUEST, format!("{error:#}")),
+        },
     }
 }
 
@@ -306,6 +355,82 @@ pub async fn antidelete_archive_media(
     }
 }
 
+/// I serve a stored file of a deleted message. Files are encrypted on disk, so this replaces a
+/// static folder, and I let a browser render only types that can't run anything.
+pub async fn antidelete_media(State(state): State<AppState>, Path(path): Path<String>) -> Response {
+    let source = format!("data/deleted_media/{path}");
+    let content_type = match source.rsplit('.').next() {
+        Some("jpg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("mp4") => "video/mp4",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
+    };
+    match crate::anti_delete::read_media(state.db(), &source).await {
+        Ok(Some(bytes)) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, "private, no-store"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "no such file"),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")),
+    }
+}
+
+pub async fn antidelete_settings(State(state): State<AppState>) -> Response {
+    Json(json!({
+        "retention_days": crate::anti_delete::retention_days(state.db()).await,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RetentionRequest {
+    retention_days: u64,
+}
+
+pub async fn save_antidelete_settings(
+    State(state): State<AppState>,
+    Json(body): Json<RetentionRequest>,
+) -> Response {
+    let days = Value::from(body.retention_days.min(36_500));
+    if let Err(error) = state
+        .db()
+        .set(crate::anti_delete::RETENTION_KEY, days)
+        .await
+    {
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
+    }
+    match crate::anti_delete::apply_retention(state.db()).await {
+        Ok(removed) => Json(json!({ "ok": true, "removed": removed })).into_response(),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ClearRequest {
+    confirm: String,
+}
+
+pub async fn clear_antidelete(
+    State(state): State<AppState>,
+    Json(body): Json<ClearRequest>,
+) -> Response {
+    if body.confirm != "DELETE" {
+        return api_error(StatusCode::BAD_REQUEST, "type DELETE to confirm");
+    }
+    match crate::anti_delete::clear_all(state.db()).await {
+        Ok(removed) => Json(json!({ "ok": true, "removed": removed })).into_response(),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")),
+    }
+}
+
 pub async fn antidelete(State(state): State<AppState>) -> Response {
     Json(crate::anti_delete::store(state.db()).await).into_response()
 }
@@ -365,6 +490,7 @@ pub struct SettingsUpdate {
 
 pub async fn update_settings(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<SettingsUpdate>,
 ) -> Response {
     let db = state.db();
@@ -418,12 +544,23 @@ pub async fn update_settings(
         if let Err(error) = auth::set_password(db, Some(password)).await {
             return api_error(StatusCode::BAD_REQUEST, error);
         }
+        // Whoever knew the old password should not stay signed in with it.
+        let current = auth::session_from_headers(&headers);
+        state
+            .services
+            .panel_auth
+            .revoke_others(current.as_deref())
+            .await;
     }
 
     if let Some(token) = &body.bot_token {
         let token = token.trim();
         if token.is_empty() {
-            if let Err(error) = db.remove(key::BOT_TOKEN).await {
+            let removed = match &state.bot {
+                Some(bot) => bot.remove().await,
+                None => core_settings::remove_bot_token(db).await,
+            };
+            if let Err(error) = removed {
                 return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
             }
         } else {
@@ -433,15 +570,12 @@ pub async fn update_settings(
                     format!("Telegram rejected the bot token: {error}"),
                 );
             }
-            if let Err(error) = db
-                .set(key::BOT_TOKEN, Value::String(token.to_string()))
-                .await
-            {
+            if let Err(error) = core_settings::set_bot_token(db, token).await {
                 return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
             }
-        }
-        if let Some(bot) = &state.bot {
-            bot.restart().await;
+            if let Some(bot) = &state.bot {
+                bot.restart().await;
+            }
         }
     }
 
@@ -464,14 +598,10 @@ pub async fn update_settings(
                 "master password must be at least 8 characters",
             );
         }
-        let current = db.master_password().await;
-        let result =
-            match crate::anti_delete::rewrap_storage(current.as_deref(), next_password.as_deref())
-                .await
-            {
-                Ok(()) => db.set_master_password(next_password).await,
-                Err(error) => Err(error),
-            };
+        let result = match crate::anti_delete::reseal_storage(db).await {
+            Ok(()) => db.set_master_password(next_password).await,
+            Err(error) => Err(error),
+        };
         if let Err(error) = result {
             return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
         }

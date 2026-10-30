@@ -35,7 +35,26 @@ const PROTECTED_KEYS: &[&str] = &[
     db_key::SESSION_FILES,
     crate::core_settings::key::BOT_TOKEN,
 ];
-const PROTECTED_PREFIXES: &[&str] = &["web.", "core.", "notify.", "pmguard.", "cfg.", "auto."];
+const PROTECTED_PREFIXES: &[&str] = &[
+    "web.",
+    "core.",
+    "notify.",
+    "pmguard.",
+    "cfg.",
+    "auto.",
+    "antidelete.",
+    "device_profiles.",
+    "export.",
+    "handlers.",
+    "persona.",
+    "recovery.",
+    "ui.premium.",
+];
+/// Where a sandboxed module may read files from: what it downloaded itself. Everything else in
+/// the data directory is sessions, keys, the database, or archives.
+const SANDBOX_FILE_DIRS: &[&str] = &["data/downloads/"];
+/// Environment variables I keep from sandboxed modules even with the `secrets` permission.
+const CORE_SECRETS: &[&str] = &[env_key::TELOXIDE_TOKEN, env_key::FLY_MASTER_PASSWORD];
 
 /// I cap scheduled messages at the longest delay Telegram accepts.
 const MAX_SCHEDULE_SECONDS: u64 = 365 * 24 * 60 * 60;
@@ -115,6 +134,21 @@ impl Ctx {
             )));
         }
         Ok(())
+    }
+
+    fn check_file(&self, path: &str) -> mlua::Result<()> {
+        let path = path.replace('\\', "/");
+        if self.trusted
+            || (!path.split('/').any(|part| part == "..")
+                && SANDBOX_FILE_DIRS.iter().any(|dir| path.starts_with(dir)))
+        {
+            return Ok(());
+        }
+        Err(mlua::Error::runtime(format!(
+            "module '{}' may only read files from {}",
+            self.module_name,
+            SANDBOX_FILE_DIRS.join(", ")
+        )))
     }
 
     async fn current_message(&self) -> Option<Message> {
@@ -1121,6 +1155,7 @@ impl UserData for Ctx {
             )| async move {
                 ctx.require_permission("network")?;
                 ctx.require_permission("telegram.media")?;
+                ctx.check_file(&path)?;
                 let fields = field_pairs(fields)?;
                 let headers = header_pairs(headers)?;
                 let value = http_multipart_json(&method, &url, &file_field, &path, fields, headers)
@@ -1165,6 +1200,12 @@ impl UserData for Ctx {
 
         methods.add_method("env_get", |_, ctx, key: String| {
             ctx.require_permission("secrets")?;
+            if !ctx.trusted && CORE_SECRETS.contains(&key.as_str()) {
+                return Err(mlua::Error::runtime(format!(
+                    "module '{}' may not read {key}",
+                    ctx.module_name
+                )));
+            }
             Ok(std::env::var(key).ok())
         });
 
@@ -1191,6 +1232,7 @@ impl UserData for Ctx {
             "send_file",
             |_, ctx, (path, caption): (String, Option<String>)| async move {
                 ctx.require_permission("telegram.media")?;
+                ctx.check_file(&path)?;
                 send_file(ctx.clone(), path, caption.unwrap_or_default())
                     .await
                     .map_err(rt)

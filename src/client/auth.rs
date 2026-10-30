@@ -26,7 +26,7 @@ pub struct PendingAuth {
 pub enum SignInOutcome {
     NeedPassword {
         hint: Option<String>,
-        pending: PendingAuth,
+        pending: Box<PendingAuth>,
     },
     Failed(anyhow::Error),
 }
@@ -84,8 +84,7 @@ pub async fn connect(
     } else {
         device_profile::for_new_session(&db, &session_file).await?
     };
-    let (client, updates_rx, pool) =
-        open_pool(api_id, &session_file, proxy_url, &profile).await?;
+    let (client, updates_rx, pool) = open_pool(api_id, &session_file, proxy_url, &profile).await?;
 
     if !client.is_authorized().await? {
         if existed && web_mode {
@@ -107,8 +106,7 @@ pub async fn connect_session(db: Arc<Database>, session_file: String) -> Result<
         .context("api_id must be an integer")?;
     let proxy_url = read_optional_config(&db, db_key::PROXY_URL).await;
     let profile = device_profile::for_session(&db, &session_file).await;
-    let (client, updates_rx, pool) =
-        open_pool(api_id, &session_file, proxy_url, &profile).await?;
+    let (client, updates_rx, pool) = open_pool(api_id, &session_file, proxy_url, &profile).await?;
 
     if !client.is_authorized().await? {
         abort_pool(pool).await;
@@ -234,14 +232,14 @@ pub async fn complete_sign_in(
                 let hint = pw_token.hint().map(str::to_string);
                 return Err(SignInOutcome::NeedPassword {
                     hint,
-                    pending: PendingAuth {
+                    pending: Box::new(PendingAuth {
                         client,
                         token,
                         session_file,
                         updates,
                         pool,
                         device,
-                    },
+                    }),
                 });
             }
             if let Err(error) = client.check_password(pw_token, password.as_bytes()).await {
@@ -325,6 +323,7 @@ pub async fn open_pool_with_session(
         }
     }
     let session = Arc::new(SqliteSession::open(session_file).await?);
+    restrict_session_file(session_file).await;
     let params = ConnectionParams {
         device_model: profile.device.clone(),
         system_version: profile.system.clone(),
@@ -340,6 +339,18 @@ pub async fn open_pool_with_session(
     let client = Client::new(handle);
     let pool = tokio::spawn(runner.run());
     Ok((client, updates, pool, session))
+}
+
+/// A session file is a login, so only the owner of the process may read it.
+async fn restrict_session_file(session_file: &str) {
+    #[cfg(unix)]
+    for suffix in ["", "-wal", "-shm"] {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::Permissions::from_mode(0o600);
+        let _ = tokio::fs::set_permissions(format!("{session_file}{suffix}"), mode).await;
+    }
+    #[cfg(not(unix))]
+    let _ = session_file;
 }
 
 async fn read_config(db: &Database, key: &str) -> Result<String> {

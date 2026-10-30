@@ -104,8 +104,9 @@ pub async fn run_dashboard(
     let listener = tokio::net::TcpListener::bind(web.bind_addr()).await?;
     let token = panel_auth.issue_startup_token().await;
     info!("web panel at {}", web.public_url());
-    info!(
-        "one-time panel login link (valid 1 hour): {}/auth/token?t={token}",
+    // The link goes to the console only: it must not end up in the log buffer.
+    println!(
+        "one-time panel login link (valid 1 hour): {}/auth#t={token}",
         web.public_url()
     );
 
@@ -118,7 +119,7 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
         .route("/assets/{file}", get(asset_handler))
         .route("/auth", get(auth_page))
         .route("/auth/login", post(api::auth_login))
-        .route("/auth/token", get(api::auth_token))
+        .route("/auth/token", post(api::auth_token))
         .route("/auth/logout", post(api::auth_logout));
 
     let protected = Router::new()
@@ -141,6 +142,15 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
         )
         .route("/api/device-profiles/assign", post(device_api::assign))
         .route("/api/status", get(api::status))
+        .route("/api/panel-sessions", get(api::panel_sessions))
+        .route(
+            "/api/panel-sessions/others",
+            post(api::revoke_other_panel_sessions),
+        )
+        .route(
+            "/api/panel-sessions/{id}",
+            delete(api::revoke_panel_session),
+        )
         .route("/api/modules", get(api::modules))
         .route("/api/modules/install", post(api::install_module))
         .route("/api/modules/restore", post(api::restore_modules))
@@ -155,6 +165,11 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
         )
         .route("/api/logs", get(api::logs))
         .route("/api/antidelete", get(api::antidelete))
+        .route(
+            "/api/antidelete/settings",
+            get(api::antidelete_settings).post(api::save_antidelete_settings),
+        )
+        .route("/api/antidelete/clear", post(api::clear_antidelete))
         .route("/api/deletelog", get(api::delete_log))
         .route(
             "/api/antidelete/archive/{account}/{message}",
@@ -173,6 +188,19 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
         .route("/api/accounts", get(accounts_api::list))
         .route("/api/accounts/{id}/counts", get(accounts_api::counts))
         .route("/api/accounts/{id}/avatar", get(accounts_api::avatar))
+        .route("/api/accounts/{id}/logout", post(accounts_api::logout))
+        .route(
+            "/api/accounts/{id}/authorizations",
+            get(accounts_api::authorizations),
+        )
+        .route(
+            "/api/accounts/{id}/authorizations/others",
+            post(accounts_api::reset_other_authorizations),
+        )
+        .route(
+            "/api/accounts/{id}/authorizations/{hash}",
+            delete(accounts_api::reset_authorization),
+        )
         .route(
             "/api/accounts/{id}/persona",
             get(accounts_api::persona_overview).post(accounts_api::persona_apply),
@@ -244,7 +272,7 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
             "/api/premium",
             get(recovery_api::premium).post(recovery_api::save_premium),
         )
-        .nest_service("/media", ServeDir::new("data/deleted_media"))
+        .route("/media/{*path}", get(api::antidelete_media))
         .merge(
             Router::new()
                 .nest_service("/exports", ServeDir::new(crate::export::EXPORTS_DIR))
@@ -347,7 +375,9 @@ mod tests {
 
     async fn login(server: &TestServer, services: &Services) -> String {
         let token = services.panel_auth.issue_link_token().await;
-        let response = local(server, "GET", &format!("/auth/token?t={token}")).await;
+        let response = local(server, "POST", "/auth/token")
+            .json(&json!({ "token": token }))
+            .await;
         response
             .headers()
             .get("set-cookie")
@@ -441,7 +471,7 @@ mod tests {
         done.finish(crate::jobs::JobStatus::Done, "12 done, 0 failed")
             .await;
         let token = services.panel_auth.issue_startup_token().await;
-        println!("PREVIEW http://127.0.0.1:{port}/auth/token?t={token}");
+        println!("PREVIEW http://127.0.0.1:{port}/auth#t={token}");
         let bot = BotManager::new(Arc::clone(&loader));
         let state = AppState {
             services: Arc::clone(&services),
@@ -548,6 +578,76 @@ mod tests {
             .add_header("cookie", cookie)
             .await;
         assert_eq!(after.status_code(), 401);
+    }
+
+    #[tokio::test]
+    async fn login_links_work_once_and_only_by_post() {
+        let (server, services) = dashboard_server().await;
+        let token = services.panel_auth.issue_link_token().await;
+        let by_get = local(&server, "GET", &format!("/auth/token?t={token}")).await;
+        assert_eq!(by_get.status_code(), 405);
+
+        let body = json!({ "token": token });
+        let first = local(&server, "POST", "/auth/token").json(&body).await;
+        assert_eq!(first.status_code(), 200);
+        let second = local(&server, "POST", "/auth/token").json(&body).await;
+        assert_eq!(second.status_code(), 401);
+    }
+
+    #[tokio::test]
+    async fn a_login_replaces_the_session_the_browser_came_with() {
+        let (server, services) = dashboard_server().await;
+        let old = login(&server, &services).await;
+        let token = services.panel_auth.issue_link_token().await;
+        let response = local(&server, "POST", "/auth/token")
+            .add_header("cookie", old.clone())
+            .json(&json!({ "token": token }))
+            .await;
+        assert_eq!(response.status_code(), 200);
+        let after = local(&server, "GET", "/api/status")
+            .add_header("cookie", old)
+            .await;
+        assert_eq!(after.status_code(), 401);
+    }
+
+    #[tokio::test]
+    async fn cross_site_requests_are_rejected_even_with_the_header() {
+        let (server, services) = dashboard_server().await;
+        let cookie = login(&server, &services).await;
+        for site in ["cross-site", "same-site"] {
+            let res = local(&server, "POST", "/api/restart")
+                .add_header("cookie", cookie.clone())
+                .add_header("sec-fetch-site", site)
+                .await;
+            assert_eq!(res.status_code(), 403, "{site}");
+        }
+    }
+
+    #[tokio::test]
+    async fn panel_sessions_can_be_listed_and_ended() {
+        let (server, services) = dashboard_server().await;
+        let mine = login(&server, &services).await;
+        let other = login(&server, &services).await;
+
+        let list: serde_json::Value = local(&server, "GET", "/api/panel-sessions")
+            .add_header("cookie", mine.clone())
+            .await
+            .json();
+        assert_eq!(list.as_array().unwrap().len(), 2);
+
+        let res = local(&server, "POST", "/api/panel-sessions/others")
+            .add_header("cookie", mine.clone())
+            .await;
+        assert_eq!(res.json::<serde_json::Value>()["ended"], 1);
+        let gone = local(&server, "GET", "/api/status")
+            .add_header("cookie", other)
+            .await;
+        assert_eq!(gone.status_code(), 401);
+
+        let res = local(&server, "DELETE", "/api/panel-sessions/nope")
+            .add_header("cookie", mine)
+            .await;
+        assert_eq!(res.status_code(), 404);
     }
 
     #[tokio::test]

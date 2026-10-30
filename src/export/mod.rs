@@ -517,6 +517,7 @@ async fn export_chat(
             {
                 Ok(archived) if !archived.is_empty() => {
                     let added = fetch::merge_deleted(
+                        &services.db,
                         &mut chat,
                         archived,
                         rules,

@@ -250,6 +250,9 @@ The panel listens on `127.0.0.1:8080` and accepts only requests addressed to `lo
 - a **one-time link**: one is printed in the console at startup, and `.panel` in
   Telegram sends a fresh one to Saved Messages.
 
+A session ends after 12 hours without use or after 7 days. Settings lists the signed-in browsers
+and can end them. See [docs/RELEASE-SIGNING.md](docs/RELEASE-SIGNING.md) for signing releases.
+
 | Page | What you can do |
 |---|---|
 | Overview | Uptime, commands, memory, a 60-minute activity chart, top commands, accounts, a getting-started checklist |

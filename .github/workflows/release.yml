@@ -95,6 +95,21 @@ jobs:
           cd dist
           sha256sum * > sha256sums.txt
           cat sha256sums.txt
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::warning::RELEASE_SIGNING_KEY is not set, this release is not signed (see docs/RELEASE-SIGNING.md)"
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release.pem"
+          { printf '%s\n' "$TAG"; cat dist/sha256sums.txt; } > "$RUNNER_TEMP/signed.txt"
+          openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/release.pem" \
+            -in "$RUNNER_TEMP/signed.txt" -out "$RUNNER_TEMP/signature.bin"
+          base64 -w0 "$RUNNER_TEMP/signature.bin" > dist/sha256sums.txt.sig
+          rm -f "$RUNNER_TEMP/release.pem"
       - name: Release notes
         run: |
           version="${TAG#v}"

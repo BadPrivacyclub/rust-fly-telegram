@@ -1422,6 +1422,7 @@ pub fn chat_allowed(dialog: &DialogEntry, rules: &ExportRules) -> bool {
 
 /// I fold deleted messages from the anti-delete archive into the chat timeline.
 pub async fn merge_deleted(
+    db: &crate::database::Database,
     chat: &mut ChatExport,
     archived: Vec<crate::anti_delete::ArchivedDeletion>,
     rules: &ExportRules,
@@ -1474,7 +1475,12 @@ pub async fn merge_deleted(
                     if let Some(parent) = target.parent() {
                         let _ = tokio::fs::create_dir_all(parent).await;
                     }
-                    if tokio::fs::copy(source, &target).await.is_ok() {
+                    let stored = crate::anti_delete::read_media(db, source).await;
+                    let copied = match stored {
+                        Ok(Some(bytes)) => tokio::fs::write(&target, bytes).await.is_ok(),
+                        _ => false,
+                    };
+                    if copied {
                         media.file = Some(relative);
                     } else {
                         media.skipped = Some("The archived copy is missing".into());

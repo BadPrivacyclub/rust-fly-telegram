@@ -280,6 +280,14 @@ impl RuntimeState {
         self.connected.store(any_connected, Ordering::Relaxed);
     }
 
+    /// I forget an account that was signed out, so the panel no longer lists it.
+    pub async fn remove_account(&self, session_file: &str) {
+        let mut accounts = self.accounts.write().await;
+        accounts.remove(session_file);
+        let any_connected = accounts.values().any(|account| account.connected);
+        self.connected.store(any_connected, Ordering::Relaxed);
+    }
+
     /// I return the Telegram user IDs of every connected account; the bot treats them as owners.
     pub async fn owner_ids(&self) -> Vec<i64> {
         self.accounts

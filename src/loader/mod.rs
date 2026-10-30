@@ -75,6 +75,9 @@ pub struct ConfigEntry {
     pub is_set: bool,
 }
 
+/// A module can't take the whole machine down with one `string.rep`.
+const LUA_MEMORY_LIMIT: usize = 1024 * 1024 * 1024;
+
 pub struct Loader {
     lua: Arc<Lua>,
     pub services: Arc<Services>,
@@ -92,6 +95,7 @@ impl Loader {
                 None
             });
         let lua = Lua::new();
+        lua.set_memory_limit(LUA_MEMORY_LIMIT)?;
         let ui: Table = lua
             .load(UI_LIBRARY)
             .set_name("ui")
@@ -344,13 +348,27 @@ impl Loader {
     }
 
     /// I grant permissions to a sandboxed module by rewriting its manifest, then reload it.
-    pub async fn set_permissions(&self, name: &str, permissions: Vec<String>) -> Result<()> {
-        let file_name = self
+    ///
+    /// A combination that can carry data out of this computer needs `confirm_risky`; I refuse
+    /// with [`manifest::RiskyPermissions`] otherwise, so no client can skip the question.
+    pub async fn set_permissions(
+        &self,
+        name: &str,
+        permissions: Vec<String>,
+        confirm_risky: bool,
+    ) -> Result<()> {
+        let (file_name, current, trusted) = self
             .modules
             .read()
             .await
             .get(name)
-            .map(|module| module.file_name.clone())
+            .map(|module| {
+                (
+                    module.file_name.clone(),
+                    module.manifest.permissions.clone(),
+                    module.manifest.trusted,
+                )
+            })
             .with_context(|| format!("unknown module '{name}'"))?;
         let mut permissions = permissions
             .into_iter()
@@ -365,6 +383,12 @@ impl Loader {
         }
         permissions.sort();
         permissions.dedup();
+        if !trusted && !confirm_risky {
+            let risks = manifest::new_risks(&current, &permissions);
+            if !risks.is_empty() {
+                return Err(manifest::RiskyPermissions { risks }.into());
+            }
+        }
 
         let module_path = self.modules_dir.join(&file_name);
         let manifest_path = manifest::manifest_path(&module_path);
@@ -928,6 +952,9 @@ fn render_module_card(
     out
 }
 
+/// A sandboxed module gets only pure functions, and its own copy of every library table: the
+/// originals are shared with trusted modules, so a module that could write to `string` or `ui`
+/// could run its code with their arguments.
 fn sandbox_environment(lua: &Lua, ui: &Table) -> Result<Table> {
     let globals = lua.globals();
     let env = lua.create_table()?;
@@ -937,13 +964,42 @@ fn sandbox_environment(lua: &Lua, ui: &Table) -> Result<Table> {
     ] {
         env.set(name, globals.get::<mlua::Value>(name)?)?;
     }
+    let mut copies = HashMap::new();
     for name in ["coroutine", "math", "string", "table", "utf8"] {
-        env.set(name, globals.get::<Table>(name)?)?;
+        let copy = sandbox_copy(lua, &globals.get::<Table>(name)?, &mut copies)?;
+        env.set(name, copy)?;
     }
-    env.set("ui", ui.clone())?;
-    env.set("json", ui.get::<Table>("__json")?)?;
+    // Without `load` a dumped function is useless, and it exposes the bytecode of trusted code.
+    env.get::<Table>("string")?.set("dump", mlua::Value::Nil)?;
+    env.set("ui", sandbox_copy(lua, ui, &mut copies)?)?;
+    env.set(
+        "json",
+        sandbox_copy(lua, &ui.get::<Table>("__json")?, &mut copies)?,
+    )?;
     env.set("_G", env.clone())?;
     Ok(env)
+}
+
+fn sandbox_copy(
+    lua: &Lua,
+    source: &Table,
+    copies: &mut HashMap<*const std::ffi::c_void, Table>,
+) -> Result<Table> {
+    if let Some(copy) = copies.get(&source.to_pointer()) {
+        return Ok(copy.clone());
+    }
+    let copy = lua.create_table()?;
+    copies.insert(source.to_pointer(), copy.clone());
+    for pair in source.pairs::<mlua::Value, mlua::Value>() {
+        let (key, value) = pair?;
+        let value = match value {
+            mlua::Value::Table(nested) => mlua::Value::Table(sandbox_copy(lua, &nested, copies)?),
+            other => other,
+        };
+        copy.raw_set(key, value)?;
+    }
+    copy.set_metatable(source.metatable())?;
+    Ok(copy)
 }
 
 /// I give modules `json.encode(value)` and `json.decode(text)`; they are safer than hand-built JSON.
@@ -1013,6 +1069,80 @@ mod tests {
         let loader = Arc::new(Loader::new(services, &dir).await.unwrap());
         loader.load_all().await.unwrap();
         (loader, dir)
+    }
+
+    #[tokio::test]
+    async fn sandboxed_modules_cannot_reach_the_host_or_touch_shared_libraries() {
+        let source = r#"
+            local M = { commands = { x = "x" } }
+            M.seen = {}
+            for _, name in ipairs({
+                "os", "io", "debug", "load", "loadstring", "dofile", "loadfile", "require",
+                "package", "getmetatable", "setmetatable", "rawset", "rawget", "collectgarbage",
+                "print",
+            }) do
+                if _G[name] ~= nil then M.seen[#M.seen + 1] = name end
+            end
+            M.dump = string.dump ~= nil
+            string.upper = function() return "hijacked" end
+            table.concat = nil
+            ui.bold = function() return "hijacked" end
+            json.encode = nil
+            function M.x() end
+            return M
+        "#;
+        let (loader, dir) = loader_with(&[("evil.lua", source)]).await;
+        let modules = loader.modules.read().await;
+        let table = &modules.get("evil").expect("the module loads").table;
+        assert_eq!(table.get::<Table>("seen").unwrap().raw_len(), 0);
+        assert!(!table.get::<bool>("dump").unwrap());
+
+        let trusted = loader.lua.load(
+            r#"return string.upper("a"), type(table.concat), ui.bold("b"), type(json.encode)"#,
+        );
+        let (upper, concat, bold, encode): (String, String, String, String) =
+            trusted.eval().unwrap();
+        assert_eq!(upper, "A");
+        assert_eq!(concat, "function");
+        assert_ne!(bold, "hijacked");
+        assert_eq!(encode, "function");
+        drop(modules);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_huge_allocation_fails_instead_of_taking_the_process_down() {
+        let (loader, dir) = loader_with(&[]).await;
+        let result = loader
+            .lua
+            .load(r#"return string.rep("x", 8 * 1024 * 1024 * 1024)"#)
+            .eval::<mlua::String>();
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn risky_permissions_need_a_confirmation() {
+        let (loader, dir) = loader_with(&[("x.lua", "return { commands = {} }")]).await;
+        let risky = vec!["network".to_string(), "secrets".to_string()];
+        let error = loader
+            .set_permissions("x", risky.clone(), false)
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<manifest::RiskyPermissions>().is_some());
+        loader
+            .set_permissions("x", vec!["network".into()], false)
+            .await
+            .unwrap();
+        loader
+            .set_permissions("x", risky.clone(), true)
+            .await
+            .unwrap();
+        loader
+            .set_permissions("x", risky, false)
+            .await
+            .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn lua_with_ui() -> Lua {

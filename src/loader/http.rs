@@ -47,7 +47,9 @@ fn client() -> anyhow::Result<reqwest::Client> {
         let route = reqwest::Proxy::all(&proxy).context("the proxy URL is invalid")?;
         builder = builder.proxy(route);
     }
-    let client = builder.build().context("could not set up the HTTP client")?;
+    let client = builder
+        .build()
+        .context("could not set up the HTTP client")?;
     *cached = Some((proxy, client.clone()));
     Ok(client)
 }

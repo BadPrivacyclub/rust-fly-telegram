@@ -1,17 +1,80 @@
 //! My in-memory ring buffer of recent log records for the web panel and the bot.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use regex::Regex;
 use serde::Serialize;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
 const CAPACITY: usize = 2000;
+const MASK: &str = "[hidden]";
+
+/// What I cut out of every log line, because each of these opens the account or the panel:
+/// bot tokens, proxy logins, named secrets, login links, API hashes and session ids, and
+/// string sessions (long base64).
+static SECRETS: LazyLock<[(Regex, String); 6]> = LazyLock::new(|| {
+    let rule = |pattern: &str, replacement: String| {
+        (
+            Regex::new(pattern).expect("log masks are valid patterns"),
+            replacement,
+        )
+    };
+    [
+        rule(r"\d{6,12}:[A-Za-z0-9_-]{30,}", MASK.to_string()),
+        rule(r"://[^/\s:@]+:[^/\s@]+@", format!("://{MASK}@")),
+        rule(
+            r#"(?i)\b(password|passwd|passphrase|secret|api_hash|auth_key|bot_token|token|fly_session)("?\s*[=:]\s*"?)[^\s",;&}]+"#,
+            format!("${{1}}${{2}}{MASK}"),
+        ),
+        rule(r"([?&#]t=)[0-9a-fA-F]+", format!("${{1}}{MASK}")),
+        rule(r"\b[0-9a-fA-F]{32,}\b", MASK.to_string()),
+        rule(r"[A-Za-z0-9+/_-]{200,}={0,2}", MASK.to_string()),
+    ]
+});
+
+/// I hide credentials in `text`, leaving the rest of the line alone.
+pub fn redact(text: &str) -> Cow<'_, str> {
+    let mut out = Cow::Borrowed(text);
+    for (pattern, replacement) in SECRETS.iter() {
+        if let Cow::Owned(changed) = pattern.replace_all(&out, replacement.as_str()) {
+            out = Cow::Owned(changed);
+        }
+    }
+    out
+}
+
+/// The console side of the same rule: I mask a formatted line before it reaches stdout, so it
+/// also stays out of journald and any file the output is sent to.
+#[derive(Clone, Copy, Default)]
+pub struct RedactingStdout;
+
+impl<'a> MakeWriter<'a> for RedactingStdout {
+    type Writer = RedactingStdout;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        RedactingStdout
+    }
+}
+
+impl std::io::Write for RedactingStdout {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        std::io::stdout().write_all(redact(&text).as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stdout().flush()
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LogRecord {
@@ -52,7 +115,7 @@ impl LogBuffer {
             ts_ms,
             level: level.to_string(),
             target: target.to_string(),
-            message,
+            message: redact(&message).into_owned(),
         };
         inner.records.push_back(record);
         while inner.records.len() > CAPACITY {
@@ -148,6 +211,46 @@ impl Visit for MessageVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_are_hidden_and_other_text_is_kept() {
+        for (line, secret) in [
+            ("GET https://api.telegram.org/bot123456789:AAFabcdefghijklmnopqrstuvwxyz012345/getMe", "AAFabc"),
+            ("proxy socks5://user:hunter2@10.0.0.1:1080 failed", "hunter2"),
+            ("api_hash=0123456789abcdef0123456789abcdef", "0123456789abcdef"),
+            (r#"body {"password":"hunter2","x":1}"#, "hunter2"),
+            ("token: abc.def", "abc.def"),
+            ("open http://127.0.0.1:8080/auth#t=deadbeef", "deadbeef"),
+            ("cookie fly_session=abcabc; Path=/", "abcabc"),
+            ("session 0123456789abcdef0123456789abcdef0123456789abcdef", "0123456789abcdef"),
+        ] {
+            let masked = redact(line);
+            assert!(!masked.contains(secret), "{masked}");
+            assert!(masked.contains(MASK), "{masked}");
+        }
+        let long = format!("1{}", "A".repeat(350));
+        assert_eq!(redact(&long), MASK);
+
+        for line in [
+            "module 'ai' handler 'ask': boom",
+            "userbot account 'Alex' connected, starting update loop",
+            "session of Alex was lost: 401",
+            "2FA password required",
+        ] {
+            assert_eq!(redact(line), line);
+        }
+    }
+
+    #[test]
+    fn the_ring_buffer_never_stores_a_secret() {
+        let buffer = LogBuffer::default();
+        buffer.push(
+            &Level::ERROR,
+            "fly_telegram",
+            "bot 123456789:AAFabcdefghijklmnopqrstuvwxyz012345 failed".into(),
+        );
+        assert!(!buffer.since(0, None, 1)[0].message.contains("AAFabc"));
+    }
 
     #[test]
     fn ring_buffer_filters_and_limits() {

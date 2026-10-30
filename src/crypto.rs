@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 const VERSION: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
+const SEAL_MAGIC: &[u8] = b"FLY1";
 
 #[derive(Clone)]
 pub struct MasterKey([u8; 32]);
@@ -66,6 +67,37 @@ pub fn encrypt_with_password(plain: &[u8], password: &str) -> Result<Vec<u8>> {
     serde_json::to_vec_pretty(&blob).context("serializing encrypted blob")
 }
 
+/// I encrypt with a raw 32-byte key. The output is `FLY1`, the nonce, then the ciphertext.
+pub fn seal_bytes(plain: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
+    let mut nonce = [0_u8; NONCE_LEN];
+    OsRng.fill_bytes(&mut nonce);
+    let ciphertext = XChaCha20Poly1305::new(key.into())
+        .encrypt(XNonce::from_slice(&nonce), plain)
+        .map_err(|_| anyhow::anyhow!("encryption failed"))?;
+    let mut out = Vec::with_capacity(SEAL_MAGIC.len() + NONCE_LEN + ciphertext.len());
+    out.extend_from_slice(SEAL_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+pub fn open_bytes(sealed: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
+    let body = sealed
+        .strip_prefix(SEAL_MAGIC)
+        .filter(|body| body.len() > NONCE_LEN)
+        .context("not a sealed value")?;
+    let (nonce, ciphertext) = body.split_at(NONCE_LEN);
+    XChaCha20Poly1305::new(key.into())
+        .decrypt(XNonce::from_slice(nonce), ciphertext)
+        .map_err(|_| anyhow::anyhow!("wrong key or corrupted data"))
+}
+
+pub fn random_key() -> [u8; 32] {
+    let mut key = [0_u8; 32];
+    OsRng.fill_bytes(&mut key);
+    key
+}
+
 pub fn generate_keypair() -> (SigningKey, VerifyingKey) {
     let sk = SigningKey::generate(&mut OsRng);
     let vk = sk.verifying_key();
@@ -76,7 +108,6 @@ pub fn sign_bytes(payload: &[u8], key: &SigningKey) -> [u8; 64] {
     key.sign(payload).to_bytes()
 }
 
-#[allow(dead_code)]
 pub fn verify_bytes(payload: &[u8], sig: &[u8; 64], key: &VerifyingKey) -> bool {
     let sig = Signature::from_bytes(sig);
     key.verify(payload, &sig).is_ok()
@@ -144,6 +175,15 @@ mod tests {
 
     fn temp_path(label: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!("fly_telegram_{label}_{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn sealed_bytes_round_trip_and_reject_a_wrong_key() {
+        let key = random_key();
+        let sealed = seal_bytes(b"secret", &key).unwrap();
+        assert_eq!(open_bytes(&sealed, &key).unwrap(), b"secret");
+        assert!(open_bytes(&sealed, &random_key()).is_err());
+        assert!(open_bytes(b"plain text", &key).is_err());
     }
 
     #[test]

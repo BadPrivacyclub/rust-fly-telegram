@@ -13,6 +13,8 @@ pub mod key {
     pub const SUDO_USERS: &str = "core.sudo_users";
     pub const RESTART_NOTICE: &str = "core.restart_notice";
     pub const BOT_TOKEN: &str = "bot_token";
+    /// Set when the owner removed the bot, so a token left in the environment stays unused.
+    pub const BOT_REMOVED: &str = "core.bot_removed";
     pub const NOTIFY_ERRORS: &str = "notify.errors";
     pub const NOTIFY_PMGUARD: &str = "notify.pmguard";
     pub const NOTIFY_STARTUP: &str = "notify.startup";
@@ -213,7 +215,21 @@ pub async fn flag(db: &Database, key: &str, default: bool) -> bool {
     db.get(key).await.as_bool().unwrap_or(default)
 }
 
+pub async fn set_bot_token(db: &Database, token: &str) -> Result<()> {
+    db.set(key::BOT_TOKEN, Value::String(token.to_string()))
+        .await?;
+    db.remove(key::BOT_REMOVED).await
+}
+
+pub async fn remove_bot_token(db: &Database) -> Result<()> {
+    db.remove(key::BOT_TOKEN).await?;
+    db.set(key::BOT_REMOVED, Value::Bool(true)).await
+}
+
 pub async fn bot_token(db: &Database) -> Option<String> {
+    if flag(db, key::BOT_REMOVED, false).await {
+        return None;
+    }
     db.get(key::BOT_TOKEN)
         .await
         .as_str()
@@ -292,6 +308,19 @@ mod tests {
         }
         assert!(!SUDO_DENYLIST.contains(&"ping"));
         assert!(!SUDO_DENYLIST.contains(&"weather"));
+    }
+
+    #[tokio::test]
+    async fn a_removed_bot_stays_removed_until_a_new_token_is_saved() {
+        let path = std::env::temp_dir().join(format!("fly_bot_{}.json", uuid::Uuid::new_v4()));
+        let db = Database::load(&path).await.unwrap();
+        set_bot_token(&db, "1:token").await.unwrap();
+        assert_eq!(bot_token(&db).await.as_deref(), Some("1:token"));
+        remove_bot_token(&db).await.unwrap();
+        assert_eq!(bot_token(&db).await, None);
+        set_bot_token(&db, "2:token").await.unwrap();
+        assert_eq!(bot_token(&db).await.as_deref(), Some("2:token"));
+        let _ = tokio::fs::remove_file(path).await;
     }
 
     #[test]

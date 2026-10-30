@@ -35,6 +35,7 @@ mod runtime;
 mod service;
 mod session_security;
 mod settings;
+mod storage;
 mod telegram;
 mod updater;
 mod watcher;
@@ -140,6 +141,7 @@ async fn run() -> Result<()> {
     });
     automations::spawn(Arc::clone(&services), Arc::clone(&services.automations));
     recovery::spawn(Arc::clone(&services));
+    anti_delete::spawn_maintenance(Arc::clone(&services.db));
 
     let loader = Arc::new(Loader::new(Arc::clone(&services), config::MODULES_DIR).await?);
     loader.load_all().await?;
@@ -223,7 +225,7 @@ fn init_tracing(level: &str, buffer: Arc<logs::LogBuffer>) -> Result<()> {
     };
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_writer(logs::RedactingStdout))
         .with(logs::BufferLayer::new(buffer))
         .try_init()
         .map_err(|e| anyhow::anyhow!(e.to_string()))

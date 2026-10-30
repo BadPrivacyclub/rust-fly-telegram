@@ -22,6 +22,9 @@ const DATABASE_PATH: &str = "data/antidelete.sqlite";
 const ENCRYPTED_DATABASE_PATH: &str = "data/antidelete.sqlite.enc";
 const DEFAULT_DELETE_LOG_LIMIT: i64 = 100;
 const MAX_DELETE_LOG_LIMIT: i64 = 500;
+/// How many days I keep deleted messages; 0 or nothing stored keeps them forever.
+pub const RETENTION_KEY: &str = "antidelete.retention_days";
+const MAINTENANCE_TICK: std::time::Duration = std::time::Duration::from_secs(3600);
 
 static SQLITE_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 
@@ -73,22 +76,41 @@ pub struct DeleteLogFilters {
     pub limit: Option<i64>,
 }
 
+/// The passwords of the encrypted archive file. It is sealed with the storage key; `legacy` opens
+/// a file from before that, sealed with the master password itself.
+struct ArchiveKeys {
+    key: Option<String>,
+    legacy: Option<String>,
+}
+
+async fn archive_keys(db: &Database) -> ArchiveKeys {
+    ArchiveKeys {
+        key: db
+            .storage_key()
+            .await
+            .ok()
+            .map(|key| crate::database::hex(&key)),
+        legacy: db.master_password().await,
+    }
+}
+
 pub async fn store(db: &Database) -> Value {
-    let password = db.master_password().await;
-    read_store(password)
+    let keys = archive_keys(db).await;
+    read_store(keys)
         .await
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
 pub async fn delete_log(db: &Database, filters: DeleteLogFilters) -> Value {
-    let password = db.master_password().await;
-    read_delete_log(password, filters)
+    let keys = archive_keys(db).await;
+    read_delete_log(keys, filters)
         .await
         .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
 }
 
 /// With `download_media` off I only describe the media: the archive channel keeps the file.
 pub async fn snapshot_message(
+    db: &Database,
     client: &Client,
     account: &AccountSnapshot,
     msg: &Message,
@@ -96,7 +118,8 @@ pub async fn snapshot_message(
 ) -> CachedDeletedMessage {
     let chat = snapshot_chat(client, account, msg).await;
     let peer_id = msg.peer_id();
-    let media = snapshot_media(account, &chat, msg, download_media).await;
+    let key = db.storage_key().await.ok();
+    let media = snapshot_media(account, &chat, msg, download_media, key.as_ref()).await;
     let sender = msg.sender();
     CachedDeletedMessage {
         account: account.clone(),
@@ -130,10 +153,10 @@ pub async fn record_deleted_message(
     cached: &CachedDeletedMessage,
     deleted_at: String,
 ) -> Result<()> {
-    let password = db.master_password().await;
+    let keys = archive_keys(db).await;
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    prepare_database_file(password.as_deref()).await?;
+    prepare_database_file(&keys).await?;
 
     let database = open_database().await?;
     let connection = database.connect()?;
@@ -144,22 +167,133 @@ pub async fn record_deleted_message(
     drop(connection);
     drop(database);
 
-    seal_database_file(password.as_deref()).await
+    seal_database_file(&keys).await
 }
 
-pub async fn rewrap_storage(
-    current_password: Option<&str>,
-    next_password: Option<&str>,
-) -> Result<()> {
+/// I move the archive file onto the storage key before the master password changes, because a
+/// file still sealed with the old password could not be opened afterwards.
+pub async fn reseal_storage(db: &Database) -> Result<()> {
+    let keys = archive_keys(db).await;
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    prepare_database_file(current_password).await?;
+    prepare_database_file(&keys).await?;
+    seal_database_file(&keys).await
+}
 
-    if next_password.is_some() {
-        seal_database_file(next_password).await
-    } else {
-        remove_encrypted_database().await
+pub async fn retention_days(db: &Database) -> u64 {
+    db.get(RETENTION_KEY).await.as_u64().unwrap_or(0)
+}
+
+/// I delete everything the archive holds on this computer and return how many messages went.
+/// Copies in the private archive channels live in Telegram and stay.
+pub async fn clear_all(db: &Database) -> Result<usize> {
+    let keys = archive_keys(db).await;
+    let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().await;
+    let mut removed = 0;
+    if Path::new(DATABASE_PATH).exists() || Path::new(ENCRYPTED_DATABASE_PATH).exists() {
+        prepare_database_file(&keys).await?;
+        let database = open_database().await?;
+        let connection = database.connect()?;
+        init_schema(&connection).await?;
+        removed = connection
+            .execute("DELETE FROM deleted_messages", ())
+            .await? as usize;
+        connection.execute("DELETE FROM chats", ()).await?;
+        connection.execute("DELETE FROM accounts", ()).await?;
+        connection.execute("VACUUM", ()).await?;
+        drop(connection);
+        drop(database);
+        seal_database_file(&keys).await?;
     }
+    for dir in [
+        Path::new(media::MEDIA_DIR),
+        &Path::new("data").join("avatars"),
+    ] {
+        if dir.exists() {
+            tokio::fs::remove_dir_all(dir).await?;
+        }
+    }
+    Ok(removed)
+}
+
+/// I delete messages older than the retention period, with their files.
+pub async fn apply_retention(db: &Database) -> Result<usize> {
+    let days = retention_days(db).await;
+    if days == 0 {
+        return Ok(0);
+    }
+    let cutoff = crate::account_tools::now_secs() - (days as i64).saturating_mul(86_400);
+    remove_older_than(db, cutoff).await
+}
+
+async fn remove_older_than(db: &Database, cutoff: i64) -> Result<usize> {
+    let keys = archive_keys(db).await;
+    let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().await;
+    if !Path::new(DATABASE_PATH).exists() && !Path::new(ENCRYPTED_DATABASE_PATH).exists() {
+        return Ok(0);
+    }
+    prepare_database_file(&keys).await?;
+    let database = open_database().await?;
+    let connection = database.connect()?;
+    init_schema(&connection).await?;
+    let mut rows = connection
+        .query(
+            "SELECT media_path FROM deleted_messages
+             WHERE CAST(deleted_at AS INTEGER) < ?1 AND media_path IS NOT NULL",
+            params![cutoff],
+        )
+        .await?;
+    let mut files = Vec::new();
+    while let Some(row) = rows.next().await? {
+        files.push(row.get::<String>(0)?);
+    }
+    drop(rows);
+    let removed = connection
+        .execute(
+            "DELETE FROM deleted_messages WHERE CAST(deleted_at AS INTEGER) < ?1",
+            params![cutoff],
+        )
+        .await? as usize;
+    if removed > 0 {
+        connection.execute("VACUUM", ()).await?;
+    }
+    drop(connection);
+    drop(database);
+    seal_database_file(&keys).await?;
+    for file in files {
+        media::remove(&file).await;
+    }
+    Ok(removed)
+}
+
+/// I read a stored file of a deleted message. `path` is what the archive recorded for it.
+pub async fn read_media(db: &Database, path: &str) -> Result<Option<Vec<u8>>> {
+    media::read(path, &db.storage_key().await?).await
+}
+
+pub async fn remove_media(path: &str) {
+    media::remove(path).await;
+}
+
+/// In the background I encrypt media saved by older versions and apply the retention period.
+pub fn spawn_maintenance(db: std::sync::Arc<Database>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MAINTENANCE_TICK);
+        loop {
+            interval.tick().await;
+            match db.storage_key().await {
+                Ok(key) => media::seal_existing(&key).await,
+                Err(error) => tracing::warn!("anti-delete storage key: {error:#}"),
+            }
+            match apply_retention(&db).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!("anti-delete: {count} old message(s) removed"),
+                Err(error) => tracing::warn!("anti-delete retention: {error:#}"),
+            }
+        }
+    });
 }
 
 /// A deleted message as I read it back from the archive for an export.
@@ -181,13 +315,13 @@ pub async fn deleted_for_chat(
     account_id: i64,
     chat_id: i64,
 ) -> Result<Vec<ArchivedDeletion>> {
-    let password = db.master_password().await;
+    let keys = archive_keys(db).await;
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
     if !Path::new(DATABASE_PATH).exists() && !Path::new(ENCRYPTED_DATABASE_PATH).exists() {
         return Ok(Vec::new());
     }
-    prepare_database_file(password.as_deref()).await?;
+    prepare_database_file(&keys).await?;
     let database = open_database().await?;
     let connection = database.connect()?;
     init_schema(&connection).await?;
@@ -223,19 +357,19 @@ pub async fn deleted_for_chat(
     drop(rows);
     drop(connection);
     drop(database);
-    seal_database_file(password.as_deref()).await?;
+    seal_database_file(&keys).await?;
     Ok(out)
 }
 
 /// I remove every archived message, chat, saved file, and avatar of one account.
 pub async fn purge_account(db: &Database, account_id: i64) -> Result<usize> {
-    let password = db.master_password().await;
+    let keys = archive_keys(db).await;
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
     let id = account_id.to_string();
     let mut removed = 0;
     if Path::new(DATABASE_PATH).exists() || Path::new(ENCRYPTED_DATABASE_PATH).exists() {
-        prepare_database_file(password.as_deref()).await?;
+        prepare_database_file(&keys).await?;
         let database = open_database().await?;
         let connection = database.connect()?;
         init_schema(&connection).await?;
@@ -257,7 +391,7 @@ pub async fn purge_account(db: &Database, account_id: i64) -> Result<usize> {
         connection.execute("VACUUM", ()).await?;
         drop(connection);
         drop(database);
-        seal_database_file(password.as_deref()).await?;
+        seal_database_file(&keys).await?;
     }
     for dir in [
         Path::new(media::MEDIA_DIR).join(&id),
@@ -316,10 +450,10 @@ pub async fn account_snapshot(
     }
 }
 
-async fn read_store(password: Option<String>) -> Result<Value> {
+async fn read_store(keys: ArchiveKeys) -> Result<Value> {
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    prepare_database_file(password.as_deref()).await?;
+    prepare_database_file(&keys).await?;
 
     let database = open_database().await?;
     let connection = database.connect()?;
@@ -328,14 +462,14 @@ async fn read_store(password: Option<String>) -> Result<Value> {
     drop(connection);
     drop(database);
 
-    seal_database_file(password.as_deref()).await?;
+    seal_database_file(&keys).await?;
     Ok(value)
 }
 
-async fn read_delete_log(password: Option<String>, filters: DeleteLogFilters) -> Result<Value> {
+async fn read_delete_log(keys: ArchiveKeys, filters: DeleteLogFilters) -> Result<Value> {
     let lock = SQLITE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
-    prepare_database_file(password.as_deref()).await?;
+    prepare_database_file(&keys).await?;
 
     let database = open_database().await?;
     let connection = database.connect()?;
@@ -344,32 +478,37 @@ async fn read_delete_log(password: Option<String>, filters: DeleteLogFilters) ->
     drop(connection);
     drop(database);
 
-    seal_database_file(password.as_deref()).await?;
+    seal_database_file(&keys).await?;
     Ok(value)
 }
 
-async fn prepare_database_file(password: Option<&str>) -> Result<()> {
+async fn prepare_database_file(keys: &ArchiveKeys) -> Result<()> {
     if let Some(parent) = Path::new(DATABASE_PATH).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
     let encrypted_path = Path::new(ENCRYPTED_DATABASE_PATH);
     let database_path = Path::new(DATABASE_PATH);
-    if let Some(password) = password {
-        if encrypted_path.exists() {
-            let encrypted = tokio::fs::read(encrypted_path).await?;
-            let plain = crypto::decrypt_with_password(&encrypted, password)
-                .context("failed to decrypt anti-delete database")?;
-            tokio::fs::write(database_path, plain).await?;
+    if !encrypted_path.exists() {
+        return Ok(());
+    }
+    if keys.key.is_none() && keys.legacy.is_none() {
+        if database_path.exists() {
+            return Ok(());
         }
-    } else if encrypted_path.exists() && !database_path.exists() {
         anyhow::bail!("anti-delete database is encrypted; master password is required");
     }
-    Ok(())
+    let encrypted = tokio::fs::read(encrypted_path).await?;
+    let plain = [keys.key.as_deref(), keys.legacy.as_deref()]
+        .into_iter()
+        .flatten()
+        .find_map(|password| crypto::decrypt_with_password(&encrypted, password).ok())
+        .context("failed to decrypt anti-delete database")?;
+    crate::storage::atomic_write(database_path, &plain).await
 }
 
-async fn seal_database_file(password: Option<&str>) -> Result<()> {
-    let Some(password) = password else {
+async fn seal_database_file(keys: &ArchiveKeys) -> Result<()> {
+    let Some(password) = keys.key.as_deref().or(keys.legacy.as_deref()) else {
         return Ok(());
     };
     let database_path = Path::new(DATABASE_PATH);
@@ -380,16 +519,8 @@ async fn seal_database_file(password: Option<&str>) -> Result<()> {
     let plain = tokio::fs::read(database_path).await?;
     let encrypted = crypto::encrypt_with_password(&plain, password)
         .context("failed to encrypt anti-delete database")?;
-    tokio::fs::write(ENCRYPTED_DATABASE_PATH, encrypted).await?;
+    crate::storage::atomic_write(Path::new(ENCRYPTED_DATABASE_PATH), &encrypted).await?;
     tokio::fs::remove_file(database_path).await?;
-    Ok(())
-}
-
-async fn remove_encrypted_database() -> Result<()> {
-    let encrypted_path = Path::new(ENCRYPTED_DATABASE_PATH);
-    if encrypted_path.exists() {
-        tokio::fs::remove_file(encrypted_path).await?;
-    }
     Ok(())
 }
 

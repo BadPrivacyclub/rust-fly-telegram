@@ -79,6 +79,18 @@ impl BotManager {
         }));
     }
 
+    /// I remove the bot for good: its menu in Telegram, its token, and the running dispatcher.
+    pub async fn remove(&self) -> anyhow::Result<()> {
+        let services = &self.loader.services;
+        if let Some(bot) = services.notifier.bot().await {
+            let _ = bot.delete_my_commands().await;
+        }
+        core_settings::remove_bot_token(&services.db).await?;
+        self.stop().await;
+        info!("control bot removed");
+        Ok(())
+    }
+
     pub async fn stop(&self) {
         if let Some(handle) = self.task.lock().await.take() {
             handle.abort();

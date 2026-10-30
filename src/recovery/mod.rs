@@ -584,13 +584,8 @@ pub async fn restore(
         .filter(|p| !p.is_empty());
     // The restored session is the same account, so it keeps the profile it had.
     let profile = crate::device_profile::for_session(&services.db, &session_file).await;
-    let (client, _updates, pool, session) = crate::client::auth::open_pool_with_session(
-        api_id,
-        &session_file,
-        proxy,
-        &profile,
-    )
-    .await?;
+    let (client, _updates, pool, session) =
+        crate::client::auth::open_pool_with_session(api_id, &session_file, proxy, &profile).await?;
 
     let result = passkey_sign_in(&client, &session, &mut secret, api_id, &api_hash).await;
     vault.update_secret(user_id, &secret)?;
@@ -835,11 +830,61 @@ async fn retire_session_file(session_file: &str) -> Result<()> {
     Ok(())
 }
 
+/// I sign a connected account out of Telegram and remove its session from this computer. Its
+/// data stays unless `forget` is set, which also deletes what `purge` deletes and the access key.
+pub async fn log_out(
+    services: &Arc<Services>,
+    user_id: i64,
+    forget: bool,
+    with_exports: bool,
+) -> Result<Value> {
+    let handle = services
+        .accounts
+        .get(user_id)
+        .await
+        .context("this account is not connected")?;
+    if crate::persona::status(&services.db, user_id)
+        .await
+        .is_some()
+    {
+        bail!("this account wears a persona; restore its real profile first");
+    }
+    if forget {
+        // Telegram only takes the passkey back while the session still works.
+        revoke_key(services, user_id).await?;
+    }
+    handle.stop.set_closing(true);
+    match handle.client.invoke(&tl::functions::auth::LogOut {}).await {
+        Ok(_) => {}
+        Err(error) if is_session_lost(&error) => {}
+        Err(error) => {
+            handle.stop.set_closing(false);
+            bail!("Telegram did not sign the account out: {error}");
+        }
+    }
+    handle.stop.stop_and_wait().await;
+    crate::premium::remove_account(user_id);
+    services.accounts.remove(user_id).await;
+    services.runtime.remove_account(&handle.session_file).await;
+    info!("account {} signed out", handle.name);
+    if forget {
+        return purge(services, user_id, with_exports).await;
+    }
+    let files = vec![handle.session_file.clone()];
+    let removed = remove_session_files(&handle.session_file).await;
+    forget_session_files(services, &files).await?;
+    services
+        .db
+        .remove(&format!("{KNOWN_PREFIX}{}", handle.session_file))
+        .await?;
+    Ok(json!({ "session_files": removed }))
+}
+
 /// Deletes everything I keep for an account: session files, access key, anti-delete archive,
 /// export rules, and optionally its exports.
 pub async fn purge(services: &Arc<Services>, user_id: i64, with_exports: bool) -> Result<Value> {
     if services.accounts.get(user_id).await.is_some() {
-        bail!("this account is connected; sign it out in Telegram first or wait until the session is lost");
+        bail!("this account is connected; log it out first");
     }
     if let Some(pending) = services.recovery.pending.lock().await.remove(&user_id) {
         pending.pool.abort();

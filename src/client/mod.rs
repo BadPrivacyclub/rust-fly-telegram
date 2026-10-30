@@ -10,6 +10,7 @@ use tracing::{error, info};
 
 pub mod auth;
 
+use crate::account_tools::AccountStop;
 use crate::anti_delete::archive::{self, Archive};
 use crate::anti_delete::{self, AccountSnapshot, CachedDeletedMessage};
 use crate::app::Services;
@@ -108,7 +109,8 @@ fn spawn_connection(loader: Arc<Loader>, connection: auth::Connection) {
     tokio::spawn(async move {
         let session_file = connection.session_file.clone();
         let services = Arc::clone(&loader.services);
-        if let Err(e) = run_connection(loader, connection).await {
+        let stop = Arc::new(AccountStop::default());
+        if let Err(e) = run_connection(loader, connection, Arc::clone(&stop)).await {
             error!("account update loop stopped: {e}");
             if let Some(rpc) = e.downcast_ref::<grammers_client::InvocationError>() {
                 if crate::recovery::is_session_lost(rpc) {
@@ -124,19 +126,35 @@ fn spawn_connection(loader: Arc<Loader>, connection: auth::Connection) {
             crate::premium::remove_account(handle.user_id);
             services.accounts.remove(handle.user_id).await;
         }
+        stop.finished();
     });
 }
 
-async fn run_connection(loader: Arc<Loader>, connection: auth::Connection) -> Result<()> {
+/// The connection pool of an account ends with its update loop; a pool left running would keep
+/// using a session that was signed out.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn run_connection(
+    loader: Arc<Loader>,
+    connection: auth::Connection,
+    stop: Arc<AccountStop>,
+) -> Result<()> {
     let services = Arc::clone(&loader.services);
     let db = Arc::clone(&services.db);
     let runtime = Arc::clone(&services.runtime);
     let auth::Connection {
         client,
         mut updates,
-        pool: _pool,
+        pool,
         session_file,
     } = connection;
+    let _pool = AbortOnDrop(pool);
     let (account, own_user_id) = anti_delete::account_snapshot(&client, &session_file).await;
     let cached_own_user_id = Arc::new(OnceCell::new());
     if let Some(own_user_id) = own_user_id {
@@ -160,6 +178,7 @@ async fn run_connection(loader: Arc<Loader>, connection: auth::Connection) -> Re
         session_file: session_file.clone(),
         user_id,
         name: account.name.clone(),
+        stop: Arc::clone(&stop),
     };
     if user_id != 0 {
         crate::recovery::remember_session(&services, &handle).await;
@@ -201,8 +220,13 @@ async fn run_connection(loader: Arc<Loader>, connection: auth::Connection) -> Re
     }
 
     loop {
-        let update = match updates.next().await {
+        let next = tokio::select! {
+            () = stop.requested() => return Ok(()),
+            next = updates.next() => next,
+        };
+        let update = match next {
             Ok(update) => update,
+            Err(_) if stop.closing() => return Ok(()),
             Err(e) if crate::recovery::is_session_lost(&e) => return Err(e.into()),
             Err(e) => {
                 error!("update error for {session_file}: {e}");
@@ -568,7 +592,7 @@ async fn remember_message(
         return;
     }
     let in_channel = archive::enabled(db).await;
-    let evicted = cache_message(client, cache, account, msg, !in_channel).await;
+    let evicted = cache_message(db, client, cache, account, msg, !in_channel).await;
     if !in_channel {
         return;
     }
@@ -586,24 +610,34 @@ async fn remember_message(
 
 /// I return the keys of messages pushed out of the cache.
 async fn cache_message(
+    db: &Database,
     client: &grammers_client::Client,
     cache: &Arc<Mutex<Vec<CachedDeletedMessage>>>,
     account: &AccountSnapshot,
     msg: &Message,
     download_media: bool,
 ) -> Vec<archive::Key> {
-    let cached = anti_delete::snapshot_message(client, account, msg, download_media).await;
+    let cached = anti_delete::snapshot_message(db, client, account, msg, download_media).await;
 
     let mut cache = cache.lock().await;
     cache.push(cached);
-    if cache.len() > MESSAGE_CACHE_LIMIT {
-        let overflow = cache.len() - MESSAGE_CACHE_LIMIT;
-        return cache
-            .drain(..overflow)
-            .map(|m| archive::key_of(&m))
-            .collect();
+    if cache.len() <= MESSAGE_CACHE_LIMIT {
+        return Vec::new();
     }
-    Vec::new()
+    let overflow = cache.len() - MESSAGE_CACHE_LIMIT;
+    let evicted = cache.drain(..overflow).collect::<Vec<_>>();
+    // A message that leaves the cache was not deleted, so I have no reason to keep its file.
+    // An edit caches the same message again, and that newer entry still needs it.
+    let unused = evicted
+        .iter()
+        .filter_map(|m| m.media_path.clone())
+        .filter(|path| !cache.iter().any(|m| m.media_path.as_ref() == Some(path)))
+        .collect::<Vec<_>>();
+    drop(cache);
+    for path in unused {
+        anti_delete::remove_media(&path).await;
+    }
+    evicted.iter().map(archive::key_of).collect()
 }
 
 async fn take_deleted_messages(

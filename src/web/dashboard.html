@@ -233,6 +233,18 @@
             </select>
           </div>
         </div>
+        <div class="card toolbar" style="margin-bottom:12px">
+          <label class="row small"><span data-i18n="Keep deleted messages">Keep deleted messages</span>
+            <select class="input" id="ad-retention" style="width:150px">
+              <option value="0" data-i18n="Forever">Forever</option>
+              <option value="7">7</option>
+              <option value="30">30</option>
+              <option value="90">90</option>
+              <option value="365">365</option>
+            </select>
+            <span data-i18n="days">days</span></label>
+          <button class="btn btn-sm btn-danger" id="ad-clear" data-i18n="Clear the archive">Clear the archive</button>
+        </div>
         <div id="ad-disabled" class="alert warn hidden" style="margin-bottom:12px" data-i18n="Anti-delete is off. Turn it on in Settings or with .antidelete on">Anti-delete is off. Turn it on in Settings or with .antidelete on</div>
         <div class="stack" id="ad-list"></div>
       </section>
@@ -329,6 +341,15 @@
                 <button class="btn btn-primary" id="save-master" data-i18n="Save">Save</button>
                 <button class="btn btn-danger" id="clear-master" data-i18n="Remove encryption">Remove encryption</button>
               </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2 data-i18n="Panel sessions">Panel sessions</h2></div>
+            <div class="stack">
+              <p class="small faint" style="margin:0" data-i18n="Browsers signed in to this panel. A session ends after 12 hours without use.">Browsers signed in to this panel. A session ends after 12 hours without use.</p>
+              <div class="stack" id="panel-sessions"></div>
+              <div><button class="btn btn-danger" id="end-other-sessions" data-i18n="Sign out everywhere else">Sign out everywhere else</button></div>
             </div>
           </div>
 
@@ -666,6 +687,36 @@
       "h": "ч",
       "Go to Export": "Открыть «Экспорт»",
       "Go to Session recovery": "Открыть «Восстановление сессий»",
+      "Panel sessions": "Сессии панели",
+      "Browsers signed in to this panel. A session ends after 12 hours without use.": "Браузеры, вошедшие в эту панель. Сессия завершается после 12 часов без действий.",
+      "Sign out everywhere else": "Выйти на всех других устройствах",
+      "Unknown browser": "Неизвестный браузер",
+      "this browser": "этот браузер",
+      "End": "Завершить",
+      "Sessions": "Сеансы",
+      "End all other sessions": "Завершить все другие сеансы",
+      "End all other sessions of this account?": "Завершить все другие сеансы этого аккаунта?",
+      "Log out": "Выйти из аккаунта",
+      "Log out this account?": "Выйти из этого аккаунта?",
+      "Log out signs this account out of Telegram here and deletes its session file.": "Выход завершает сеанс аккаунта в Telegram и удаляет его файл сессии.",
+      "Also delete its access key, anti-delete archive, and export rules": "Также удалить ключ доступа, архив анти-удаления и правила экспорта",
+      "Remove the control bot? Its menu and notifications stop until you save a new token.": "Удалить бота-пульт? Меню и уведомления перестанут работать, пока вы не сохраните новый токен.",
+      "This combination is risky:": "Это опасное сочетание прав:",
+      "Grant it anyway?": "Всё равно выдать?",
+      "It can read your secrets and send them to any server.": "Модуль сможет прочитать ваши секреты и отправить их на любой сервер.",
+      "It can run any command and exchange data with any server.": "Модуль сможет выполнять любые команды и обмениваться данными с любым сервером.",
+      "It can read your secrets and pass them to any command.": "Модуль сможет прочитать ваши секреты и передать их любой команде.",
+      "It can create a panel login link and send it to any server.": "Модуль сможет создать ссылку входа в панель и отправить её на любой сервер.",
+      "It can read your incoming messages and send them to any server.": "Модуль сможет читать входящие сообщения и отправлять их на любой сервер.",
+      "It can read your chat history and send it to any server.": "Модуль сможет читать историю чатов и отправлять её на любой сервер.",
+      "It can send downloaded files to any server.": "Модуль сможет отправлять скачанные файлы на любой сервер.",
+      "It can download new code and install it.": "Модуль сможет скачивать и устанавливать новый код.",
+      "Keep deleted messages": "Хранить удалённые сообщения",
+      "Forever": "Всегда",
+      "days": "дней",
+      "Clear the archive": "Очистить архив",
+      "Messages older than this are deleted now and from then on. Continue?": "Сообщения старше этого срока будут удалены сейчас и дальше автоматически. Продолжить?",
+      "Delete every saved message and file on this computer? Copies in a private archive channel stay in Telegram.": "Удалить все сохранённые сообщения и файлы на этом компьютере? Копии в приватном канале-архиве останутся в Telegram.",
       "Extended export: whole account": "Расширенный экспорт: весь аккаунт",
       "Extended export: one chat": "Расширенный экспорт: один чат",
       "Official export: whole account": "Официальный экспорт: весь аккаунт",
@@ -707,7 +758,7 @@
       $("sidebar").classList.remove("open");
       Fly.store.set("fly.page", page);
       if (location.hash !== `#${page}`) history.replaceState(null, "", `#${page}`);
-      ({ overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: loadDeleted, backups: loadSettings, settings: () => { loadSettings(); loadPremium(); loadDevices(); } })[page]?.();
+      ({ overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: () => { loadAdSettings(); loadDeleted(); }, backups: loadSettings, settings: () => { loadSettings(); loadPremium(); loadDevices(); loadPanelSessions(); } })[page]?.();
     }
     document.querySelectorAll(".nav-item").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.page)));
     $("menu-toggle").addEventListener("click", () => $("sidebar").classList.toggle("open"));
@@ -1032,7 +1083,16 @@
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const permissions = [...form.querySelectorAll("input:checked")].map((el) => el.value);
-        await action(() => Fly.api(`/api/modules/${encodeURIComponent(module.name)}/permissions`, { body: { permissions } }), "Saved");
+        const path = `/api/modules/${encodeURIComponent(module.name)}/permissions`;
+        try {
+          await Fly.api(path, { body: { permissions } });
+        } catch (err) {
+          if (!err.data?.needs_confirm) { Fly.toast(err.message, "err"); return; }
+          const question = [Fly.t("This combination is risky:"), ...err.data.risks.map((risk) => `- ${Fly.t(risk)}`), Fly.t("Grant it anyway?")].join("\n");
+          if (!confirm(question)) return;
+          const saved = await action(() => Fly.api(path, { body: { permissions, confirm_risky: true } }), "Saved").catch(() => null);
+          if (!saved) return;
+        }
         closeModal();
         loadModules();
       });
@@ -1087,6 +1147,21 @@
       const normalized = path.replaceAll("\\", "/");
       const prefix = "data/deleted_media/";
       return normalized.startsWith(prefix) ? `/media/${normalized.slice(prefix.length).split("/").map(encodeURIComponent).join("/")}` : null;
+    }
+
+    $("ad-retention").addEventListener("change", async (e) => {
+      const days = Number(e.target.value);
+      if (days && !confirm(Fly.t("Messages older than this are deleted now and from then on. Continue?"))) { loadAdSettings(); return; }
+      await action(() => Fly.api("/api/antidelete/settings", { body: { retention_days: days } }), "Saved").catch(() => {});
+      loadDeleted();
+    });
+    $("ad-clear").addEventListener("click", async () => {
+      if (!confirm(Fly.t("Delete every saved message and file on this computer? Copies in a private archive channel stay in Telegram."))) return;
+      await action(() => Fly.api("/api/antidelete/clear", { body: { confirm: "DELETE" } }), "Deleted").catch(() => {});
+      loadDeleted();
+    });
+    async function loadAdSettings() {
+      try { $("ad-retention").value = String((await Fly.api("/api/antidelete/settings")).retention_days); } catch { /* the page still works without it */ }
     }
 
     async function loadDeleted() {
@@ -1162,6 +1237,26 @@
       loadSettings();
     });
 
+    async function loadPanelSessions() {
+      let list;
+      try { list = await Fly.api("/api/panel-sessions"); } catch { return; }
+      $("panel-sessions").innerHTML = list.map((s) => `<div class="row between">
+        <div style="min-width:0"><div class="small">${esc(s.user_agent || Fly.t("Unknown browser"))}</div>
+          <div class="small faint">${esc(new Date(s.last_used_at * 1000).toLocaleString())}${s.current ? ` · ${esc(Fly.t("this browser"))}` : ""}</div></div>
+        ${s.current ? "" : `<button class="btn btn-sm btn-danger" data-end-session="${esc(s.id)}">${esc(Fly.t("End"))}</button>`}
+      </div>`).join("");
+    }
+    $("panel-sessions").addEventListener("click", async (e) => {
+      const button = e.target.closest("[data-end-session]");
+      if (!button) return;
+      await action(() => Fly.api(`/api/panel-sessions/${button.dataset.endSession}`, { method: "DELETE" }), "Saved").catch(() => {});
+      loadPanelSessions();
+    });
+    $("end-other-sessions").addEventListener("click", async () => {
+      await action(() => Fly.api("/api/panel-sessions/others", { method: "POST" }), "Saved").catch(() => {});
+      loadPanelSessions();
+    });
+
     async function saveSettings(body, reload = true) {
       await action(() => Fly.api("/api/settings", { body }), "Saved");
       if (reload) loadSettings();
@@ -1177,7 +1272,10 @@
       if (!token) return;
       saveSettings({ bot_token: token }).then(() => { $("set-bot").value = ""; loadStatus(); }).catch(() => {});
     });
-    $("remove-bot").addEventListener("click", () => saveSettings({ bot_token: "" }).then(loadStatus).catch(() => {}));
+    $("remove-bot").addEventListener("click", () => {
+      if (!confirm(Fly.t("Remove the control bot? Its menu and notifications stop until you save a new token."))) return;
+      saveSettings({ bot_token: "" }).then(loadStatus).catch(() => {});
+    });
     $("save-panel-pw").addEventListener("click", () => {
       const pw = $("set-panel-pw").value;
       if (!pw) return;
@@ -1253,7 +1351,8 @@
           ${a.device ? `<div class="small muted" title="${esc(Fly.t("Device profile"))}">💻 ${esc(a.device)}</div>` : ""}
           <div class="row"><button class="btn btn-sm" data-profile="${a.id}">${Fly.icon("pencil")} ${esc(Fly.t("Edit profile"))}</button>
             <button class="btn btn-sm" data-persona="${a.id}">🎭 ${esc(Fly.t("Persona"))}</button>
-            <button class="btn btn-sm" data-device="${a.id}">💻 ${esc(Fly.t("Device"))}</button></div>
+            <button class="btn btn-sm" data-device="${a.id}">💻 ${esc(Fly.t("Device"))}</button>
+            <button class="btn btn-sm" data-sessions="${a.id}">${Fly.icon("key")} ${esc(Fly.t("Sessions"))}</button></div>
         </div>`;
       }).join("") || `<div class="empty">${esc(Fly.t("Nothing here yet"))}</div>`;
     }
@@ -1263,6 +1362,8 @@
       if (profile) return openProfile(Number(profile.dataset.profile));
       const persona = e.target.closest("[data-persona]");
       if (persona) return openPersona(Number(persona.dataset.persona));
+      const sessions = e.target.closest("[data-sessions]");
+      if (sessions) return openSessions(accountsData.find((a) => a.id === Number(sessions.dataset.sessions)));
       const device = e.target.closest("[data-device]");
       if (device) {
         const account = accountsData.find((a) => a.id === Number(device.dataset.device));
@@ -1304,6 +1405,48 @@
 
     // I wrap action() so bulk handlers reuse the toast behavior.
     function action_(fn, ok) { return action(fn, ok); }
+
+    async function openSessions(account) {
+      if (!account) return;
+      const host = document.createElement("div");
+      host.className = "stack";
+      const render = async () => {
+        let list = [];
+        try { list = await Fly.api(`/api/accounts/${account.id}/authorizations`); }
+        catch (err) { Fly.toast(err.message, "err"); }
+        const when = (seconds) => new Date(seconds * 1000).toLocaleString();
+        host.innerHTML = `
+          <div class="stack">${list.map((a) => `<div class="row between">
+            <div style="min-width:0"><b>${esc(a.device || a.app)}</b>${a.current ? ` <span class="badge ok">${esc(Fly.t("fly-telegram"))}</span>` : ""}
+              <div class="small muted">${esc(`${a.app} ${a.app_version} · ${a.platform} ${a.system}`)}</div>
+              <div class="small faint">${esc(`${a.ip} · ${a.country} · ${when(a.active_at)}`)}</div></div>
+            ${a.current ? "" : `<button class="btn btn-sm btn-danger" data-reset="${esc(a.hash)}">${esc(Fly.t("End"))}</button>`}
+          </div>`).join("")}</div>
+          <div class="row"><button class="btn btn-danger" id="reset-others">${esc(Fly.t("End all other sessions"))}</button></div>
+          <hr style="border:0;border-top:1px solid var(--border);margin:6px 0">
+          <p class="muted" style="margin:0">${esc(Fly.t("Log out signs this account out of Telegram here and deletes its session file."))}</p>
+          <label class="option"><input type="checkbox" id="logout-forget">${esc(Fly.t("Also delete its access key, anti-delete archive, and export rules"))}</label>
+          <label class="option"><input type="checkbox" id="logout-exports">${esc(Fly.t("Also delete its exports"))}</label>
+          <div class="row"><button class="btn btn-danger" id="logout-run">${esc(Fly.t("Log out"))}</button></div>`;
+        host.querySelectorAll("[data-reset]").forEach((button) => button.addEventListener("click", async () => {
+          await action(() => Fly.api(`/api/accounts/${account.id}/authorizations/${button.dataset.reset}`, { method: "DELETE" }), "Saved").catch(() => {});
+          render();
+        }));
+        host.querySelector("#reset-others").addEventListener("click", async () => {
+          if (!confirm(Fly.t("End all other sessions of this account?"))) return;
+          await action(() => Fly.api(`/api/accounts/${account.id}/authorizations/others`, { method: "POST" }), "Saved").catch(() => {});
+          render();
+        });
+        host.querySelector("#logout-run").addEventListener("click", async () => {
+          if (!confirm(Fly.t("Log out this account?"))) return;
+          const body = { confirm: "LOGOUT", forget: host.querySelector("#logout-forget").checked, exports: host.querySelector("#logout-exports").checked };
+          const result = await action(() => Fly.api(`/api/accounts/${account.id}/logout`, { body }), "Saved").catch(() => null);
+          if (result) { closeModal(); loadAccounts(); }
+        });
+      };
+      await render();
+      openModal(`${Fly.t("Sessions")}: ${account.name}`, host);
+    }
 
     function openProfile(id) {
       const account = accountsData.find((a) => a.id === id);

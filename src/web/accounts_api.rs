@@ -69,6 +69,66 @@ pub async fn avatar(State(state): State<AppState>, Path(id): Path<i64>) -> Respo
     }
 }
 
+#[derive(Deserialize)]
+pub struct LogoutRequest {
+    confirm: String,
+    #[serde(default)]
+    forget: bool,
+    #[serde(default)]
+    exports: bool,
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<LogoutRequest>,
+) -> Response {
+    if body.confirm != "LOGOUT" {
+        return api_error(StatusCode::BAD_REQUEST, "type LOGOUT to confirm");
+    }
+    match crate::recovery::log_out(&state.services, id, body.forget, body.exports).await {
+        Ok(summary) => Json(json!({ "ok": true, "removed": summary })).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, format!("{error:#}")),
+    }
+}
+
+pub async fn authorizations(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let Some(handle) = state.services.accounts.get(id).await else {
+        return api_error(StatusCode::NOT_FOUND, "account is not connected");
+    };
+    match account_tools::authorizations(&handle).await {
+        Ok(list) => Json(list).into_response(),
+        Err(error) => api_error(StatusCode::BAD_GATEWAY, error),
+    }
+}
+
+/// `hash` is text in the API: it doesn't fit a JavaScript number.
+pub async fn reset_authorization(
+    State(state): State<AppState>,
+    Path((id, hash)): Path<(i64, i64)>,
+) -> Response {
+    let Some(handle) = state.services.accounts.get(id).await else {
+        return api_error(StatusCode::NOT_FOUND, "account is not connected");
+    };
+    match account_tools::reset_authorization(&handle, hash).await {
+        Ok(()) => api_ok(),
+        Err(error) => api_error(StatusCode::BAD_GATEWAY, error),
+    }
+}
+
+pub async fn reset_other_authorizations(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Response {
+    let Some(handle) = state.services.accounts.get(id).await else {
+        return api_error(StatusCode::NOT_FOUND, "account is not connected");
+    };
+    match account_tools::reset_other_authorizations(&handle).await {
+        Ok(()) => api_ok(),
+        Err(error) => api_error(StatusCode::BAD_GATEWAY, error),
+    }
+}
+
 pub async fn persona_overview(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
     let Some(handle) = state.services.accounts.get(id).await else {
         return api_error(StatusCode::NOT_FOUND, "account is not connected");

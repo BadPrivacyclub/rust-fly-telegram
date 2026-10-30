@@ -92,7 +92,9 @@ impl Profile {
     fn same_as(&self, other: &Profile) -> bool {
         self.system.eq_ignore_ascii_case(&other.system)
             && self.device.eq_ignore_ascii_case(&other.device)
-            && self.app_version().eq_ignore_ascii_case(&other.app_version())
+            && self
+                .app_version()
+                .eq_ignore_ascii_case(&other.app_version())
     }
 }
 
@@ -317,7 +319,11 @@ pub async fn generate(db: &Database) -> Profile {
         .collect();
     let unused = |profile: &Profile| !taken.iter().any(|t| t.same_as(profile));
     let own: Vec<Profile> = if use_custom(db).await {
-        custom(db).await.into_iter().map(|item| item.profile).collect()
+        custom(db)
+            .await
+            .into_iter()
+            .map(|item| item.profile)
+            .collect()
     } else {
         Vec::new()
     };
@@ -479,9 +485,13 @@ pub fn random_builtin(rng: &mut impl Rng) -> Profile {
         }
     };
     let (app, version) = match family {
-        Family::Mac if rng.gen_bool(0.5) => ("Telegram macOS", pick(rng, MACOS_APP_VERSIONS).to_string()),
+        Family::Mac if rng.gen_bool(0.5) => {
+            ("Telegram macOS", pick(rng, MACOS_APP_VERSIONS).to_string())
+        }
         Family::Mac => ("Telegram Desktop", pick(rng, DESKTOP_VERSIONS).to_string()),
-        Family::Windows if rng.gen_bool(0.15) => ("Unigram", pick(rng, UNIGRAM_VERSIONS).to_string()),
+        Family::Windows if rng.gen_bool(0.15) => {
+            ("Unigram", pick(rng, UNIGRAM_VERSIONS).to_string())
+        }
         Family::Windows | Family::Linux => (
             "Telegram Desktop",
             format!("{} x64", pick(rng, DESKTOP_VERSIONS)),

@@ -27,7 +27,7 @@ pub struct Services {
 impl Services {
     pub async fn panel_link(&self) -> String {
         let token = self.panel_auth.issue_link_token().await;
-        format!("{}/auth/token?t={token}", self.config.web.public_url())
+        format!("{}/auth#t={token}", self.config.web.public_url())
     }
 
     /// I run a job in the background and report its result through the control bot.

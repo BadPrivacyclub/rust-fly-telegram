@@ -45,8 +45,15 @@
   <script src="/assets/common.js"></script>
   <script>
     "use strict";
-    const params = new URLSearchParams(location.search);
-    if (params.has("expired")) document.getElementById("expired").classList.remove("hidden");
+    // The token stays in the fragment, so no server or proxy sees it in a URL. I remove it
+    // from the address bar and the history before anything else can read it.
+    const linkToken = new URLSearchParams(location.hash.slice(1)).get("t");
+    if (location.hash) history.replaceState(null, "", location.pathname);
+    if (linkToken) {
+      Fly.api("/auth/token", { body: { token: linkToken } })
+        .then(() => location.replace("/"))
+        .catch(() => document.getElementById("expired").classList.remove("hidden"));
+    }
 
     function syncLangTabs() {
       document.querySelectorAll("[data-lang]").forEach((el) =>

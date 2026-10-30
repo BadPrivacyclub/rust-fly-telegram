@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use super::api::{api_error, api_ok};
 use super::{auth, AppState};
 use crate::config::{db_key, DEFAULT_SESSION_FILE, SESSIONS_DIR, SOCKS5_SCHEME};
-use crate::core_settings::{self, key};
+use crate::core_settings;
 use crate::i18n::Lang;
 
 pub async fn state(State(state): State<AppState>) -> Json<Value> {
@@ -57,10 +57,7 @@ pub async fn save_prefs(State(state): State<AppState>, Json(body): Json<PrefsReq
     {
         match crate::bot::validate_token(token).await {
             Ok(_) => {
-                if let Err(error) = db
-                    .set(key::BOT_TOKEN, Value::String(token.to_string()))
-                    .await
-                {
+                if let Err(error) = core_settings::set_bot_token(db, token).await {
                     return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
                 }
             }
@@ -216,7 +213,11 @@ pub struct SignInRequest {
     password: String,
 }
 
-pub async fn sign_in(State(state): State<AppState>, Json(body): Json<SignInRequest>) -> Response {
+pub async fn sign_in(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SignInRequest>,
+) -> Response {
     let pending = state.pending.lock().await.take();
     let Some(pending) = pending else {
         return api_error(StatusCode::BAD_REQUEST, "Request a login code first");
@@ -231,8 +232,7 @@ pub async fn sign_in(State(state): State<AppState>, Json(body): Json<SignInReque
                 return api_error(StatusCode::INTERNAL_SERVER_ERROR, e);
             }
             // The session signed in with this profile, so later connections keep it.
-            if let Err(e) = crate::device_profile::store(state.db(), &session_file, &device).await
-            {
+            if let Err(e) = crate::device_profile::store(state.db(), &session_file, &device).await {
                 return api_error(StatusCode::INTERNAL_SERVER_ERROR, e);
             }
 
@@ -244,7 +244,7 @@ pub async fn sign_in(State(state): State<AppState>, Json(body): Json<SignInReque
                 let _ = tx.send(());
             }
             // The operator who just signed in owns the account, so I keep them logged in.
-            let session = state.services.panel_auth.create_session().await;
+            let session = state.services.panel_auth.rotate_session(&headers).await;
             let mut response = api_ok();
             response
                 .headers_mut()
@@ -253,7 +253,7 @@ pub async fn sign_in(State(state): State<AppState>, Json(body): Json<SignInReque
         }
         Err(crate::client::auth::SignInOutcome::NeedPassword { hint, pending }) => {
             // I put the moved login token back so the password retry can reuse it.
-            *state.pending.lock().await = Some(pending);
+            *state.pending.lock().await = Some(*pending);
             (
                 StatusCode::OK,
                 Json(json!({ "ok": false, "need_password": true, "password_hint": hint })),

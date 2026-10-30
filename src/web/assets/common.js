@@ -203,6 +203,7 @@ const Fly = (() => {
       "Sign in": "Войти",
       "Panel password": "Пароль панели",
       "Open the one-time login link printed in the console, or send": "Откройте одноразовую ссылку из консоли или отправьте",
+      "link expired": "Ссылка истекла",
       "in any Telegram chat to receive a fresh link.": "в любом чате Telegram, чтобы получить новую ссылку.",
       "The login link has expired or was already used.": "Ссылка для входа устарела или уже использована.",
       "Wrong password": "Неверный пароль",

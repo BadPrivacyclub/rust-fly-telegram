@@ -2,6 +2,7 @@
 /data
 /database.json
 /database.json.enc
+/database.json.key
 /fly-telegram.session
 /fly-telegram.session.enc
 /sessions/

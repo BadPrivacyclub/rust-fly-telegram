@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,7 @@ use grammers_client::{tl, Client};
 use grammers_mtsender::InvocationError;
 use grammers_session::types::PeerRef;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::jobs::{Job, JobStatus};
 use crate::telegram::StoredPeer;
@@ -39,6 +40,40 @@ pub struct AccountHandle {
     pub session_file: String,
     pub user_id: i64,
     pub name: String,
+    pub stop: Arc<AccountStop>,
+}
+
+/// How I end the update loop of an account that is being signed out on purpose.
+#[derive(Default)]
+pub struct AccountStop {
+    closing: AtomicBool,
+    stop: Notify,
+    done: Notify,
+}
+
+impl AccountStop {
+    /// While this is set, a dead session is my own doing and not a lost one.
+    pub fn set_closing(&self, closing: bool) {
+        self.closing.store(closing, Ordering::SeqCst);
+    }
+
+    pub fn closing(&self) -> bool {
+        self.closing.load(Ordering::SeqCst)
+    }
+
+    pub async fn requested(&self) {
+        self.stop.notified().await;
+    }
+
+    pub fn finished(&self) {
+        self.done.notify_one();
+    }
+
+    /// I end the update loop and wait until it has let go of the session.
+    pub async fn stop_and_wait(&self) {
+        self.stop.notify_one();
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.done.notified()).await;
+    }
 }
 
 struct PendingPlan {
@@ -224,6 +259,87 @@ fn confirmation_code() -> String {
     (0..6)
         .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
         .collect()
+}
+
+/// One place the account is signed in, as Telegram lists it under Active sessions.
+#[derive(Debug, Serialize)]
+pub struct AuthorizationInfo {
+    /// Text, because the value doesn't fit a JavaScript number.
+    pub hash: String,
+    pub current: bool,
+    pub official_app: bool,
+    pub device: String,
+    pub platform: String,
+    pub system: String,
+    pub app: String,
+    pub app_version: String,
+    pub created_at: i32,
+    pub active_at: i32,
+    pub ip: String,
+    pub country: String,
+}
+
+pub async fn authorizations(handle: &AccountHandle) -> Result<Vec<AuthorizationInfo>> {
+    let tl::enums::account::Authorizations::Authorizations(list) = handle
+        .client
+        .invoke(&tl::functions::account::GetAuthorizations {})
+        .await?;
+    let mut out = list
+        .authorizations
+        .into_iter()
+        .map(|item| {
+            let tl::enums::Authorization::Authorization(a) = item;
+            AuthorizationInfo {
+                hash: a.hash.to_string(),
+                current: a.current,
+                official_app: a.official_app,
+                device: a.device_model,
+                platform: a.platform,
+                system: a.system_version,
+                app: a.app_name,
+                app_version: a.app_version,
+                created_at: a.date_created,
+                active_at: a.date_active,
+                ip: a.ip,
+                country: a.country,
+            }
+        })
+        .collect::<Vec<_>>();
+    out.sort_by_key(|a| (!a.current, std::cmp::Reverse(a.active_at)));
+    Ok(out)
+}
+
+/// Telegram refuses this from a session younger than about a day; I say so in plain words.
+fn friendly_reset_error(error: grammers_client::InvocationError) -> anyhow::Error {
+    if error
+        .to_string()
+        .contains("FRESH_RESET_AUTHORISATION_FORBIDDEN")
+    {
+        anyhow::anyhow!("Telegram does not let a session younger than 24 hours end other sessions")
+    } else {
+        error.into()
+    }
+}
+
+pub async fn reset_authorization(handle: &AccountHandle, hash: i64) -> Result<()> {
+    if hash == 0 {
+        anyhow::bail!("this is the session fly-telegram runs on; use Log out for it");
+    }
+    handle
+        .client
+        .invoke(&tl::functions::account::ResetAuthorization { hash })
+        .await
+        .map_err(friendly_reset_error)?;
+    Ok(())
+}
+
+pub async fn reset_other_authorizations(handle: &AccountHandle) -> Result<()> {
+    handle
+        .client
+        .invoke(&tl::functions::auth::ResetAuthorizations {})
+        .await
+        .map_err(friendly_reset_error)?;
+    Ok(())
 }
 
 pub fn now_secs() -> i64 {
