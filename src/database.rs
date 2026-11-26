@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::{json, Map, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::warn;
 
 use crate::config::db_key;
@@ -32,6 +33,18 @@ pub struct Database {
     csv_values: RwLock<HashMap<String, HashSet<String>>>,
     /// The storage key for sealed values and the anti-delete archive.
     storage_key: RwLock<Option<[u8; 32]>>,
+    /// Bumped after every change, so a write knows which changes its snapshot holds.
+    generation: AtomicU64,
+    writer: Mutex<Writer>,
+}
+
+/// Writes go one at a time. A change that a newer snapshot already holds needs no write of
+/// its own, so a burst of changes ends up in a few writes, and an older snapshot can never
+/// replace a newer one on disk.
+#[derive(Default)]
+struct Writer {
+    written: u64,
+    password_key: Option<(String, crypto::PasswordKey)>,
 }
 
 impl Database {
@@ -85,6 +98,8 @@ impl Database {
             data: RwLock::new(data),
             csv_values: RwLock::new(csv_values),
             storage_key: RwLock::new(storage_key),
+            generation: AtomicU64::new(0),
+            writer: Mutex::new(Writer::default()),
         })
     }
 
@@ -105,6 +120,7 @@ impl Database {
         data.insert(key, value);
         drop(csv_values);
         drop(data);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.flush().await
     }
 
@@ -137,12 +153,14 @@ impl Database {
         csv_values.remove(key);
         drop(csv_values);
         drop(data);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.flush().await
     }
 
     pub async fn set_master_password(&self, password: Option<String>) -> Result<()> {
         *self.master_password.write().await = password;
         self.write_storage_key().await?;
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.flush().await
     }
 
@@ -183,20 +201,41 @@ impl Database {
         self.master_password.read().await.clone()
     }
 
-    /// I write through a sibling file so readers never see a partial document.
+    /// Writes through a sibling file so readers never see a partial document.
     async fn flush(&self) -> Result<()> {
+        let wanted = self.generation.load(Ordering::SeqCst);
+        let mut writer = self.writer.lock().await;
+        if writer.written >= wanted {
+            return Ok(());
+        }
+        // Loaded before the snapshot, so the snapshot holds every change up to this number.
+        let generation = self.generation.load(Ordering::SeqCst);
         let password = self.master_password.read().await.clone();
-        if let Some(password) = password.as_deref() {
+        if let Some(password) = password {
             let serialized = {
                 let guard = self.data.read().await;
                 serde_json::to_string_pretty(&*guard)?
             };
-            let encrypted = crypto::encrypt_with_password(serialized.as_bytes(), password)?;
+            let password_key = match &writer.password_key {
+                Some((cached, key)) if *cached == password => key.clone(),
+                _ => {
+                    let for_derive = password.clone();
+                    let key = tokio::task::spawn_blocking(move || {
+                        crypto::PasswordKey::derive(&for_derive)
+                    })
+                    .await??;
+                    writer.password_key = Some((password, key.clone()));
+                    key
+                }
+            };
+            let encrypted =
+                crypto::encrypt_with_password_key(serialized.as_bytes(), &password_key)?;
             crate::storage::atomic_write(&encrypted_path(&self.path), &encrypted).await?;
             if self.path.exists() {
                 let _ = tokio::fs::remove_file(&self.path).await;
             }
         } else {
+            writer.password_key = None;
             let needs_key = self.data.read().await.keys().any(|key| is_sealed_key(key));
             let key = if needs_key {
                 Some(self.storage_key().await?)
@@ -209,6 +248,7 @@ impl Database {
             };
             crate::storage::atomic_write(&self.path, serialized.as_bytes()).await?;
         }
+        writer.written = generation;
         Ok(())
     }
 }
@@ -365,6 +405,51 @@ mod tests {
             .expect("test value should be persisted");
         assert_eq!(db.get("key").await, Value::String("hello".into()));
         let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_writes_leave_the_latest_state_on_disk() {
+        let (db, path) = temp_db().await;
+        let db = Arc::new(db);
+        let tasks = (0..64)
+            .map(|i| {
+                let db = Arc::clone(&db);
+                tokio::spawn(async move { db.set(format!("k{i}"), json!(i)).await })
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        let reloaded = Database::load(&path).await.unwrap();
+        for i in 0..64 {
+            assert_eq!(reloaded.get(&format!("k{i}")).await, json!(i));
+        }
+        let _ = tokio::fs::remove_file(&path).await;
+        let _ = tokio::fs::remove_file(key_path(&path)).await;
+    }
+
+    #[tokio::test]
+    async fn encrypted_writes_derive_the_key_once() {
+        let path = env::temp_dir().join(format!("fly_telegram_test_{}.json", uuid::Uuid::new_v4()));
+        let db = Database::load_with_password(&path, Some("secret".into()))
+            .await
+            .unwrap();
+        db.set("first", json!(0)).await.unwrap();
+        let started = Instant::now();
+        for i in 0..20 {
+            db.set("counter", json!(i)).await.unwrap();
+        }
+        let per_write = started.elapsed() / 20;
+        let reloaded = Database::load_with_password(&path, Some("secret".into()))
+            .await
+            .unwrap();
+        assert_eq!(reloaded.get("counter").await, json!(19));
+        assert!(
+            per_write < std::time::Duration::from_millis(50),
+            "{per_write:?} per write"
+        );
+        let _ = tokio::fs::remove_file(encrypted_path(&path)).await;
+        let _ = tokio::fs::remove_file(key_path(&path)).await;
     }
 
     #[tokio::test]

@@ -78,6 +78,9 @@
 
 ### Changes
 
+- Database writes go one at a time and a burst of changes shares one write, so an older
+  copy can no longer overwrite a newer one on disk. With a master password the key is
+  derived once instead of on every change, which made each change take a noticeable time.
 - Module HTTP requests (persona pictures included) go through the SOCKS5 proxy from the
   settings.
 - Accounts without a chosen profile now report `Linux · VPS · Fly Telegram v.<version>`

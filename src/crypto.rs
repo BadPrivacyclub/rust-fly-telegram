@@ -44,13 +44,36 @@ struct EncryptedBlob {
 }
 
 pub fn encrypt_with_password(plain: &[u8], password: &str) -> Result<Vec<u8>> {
-    let mut salt = [0_u8; SALT_LEN];
+    let key = PasswordKey::derive(password)?;
+    encrypt_with_password_key(plain, &key)
+}
+
+/// A key derived from a password together with its salt. Derivation is slow on purpose, so a
+/// file written again and again keeps one derived key instead of running Argon2 every time.
+#[derive(Clone)]
+pub struct PasswordKey {
+    salt: [u8; SALT_LEN],
+    key: MasterKey,
+}
+
+impl PasswordKey {
+    pub fn derive(password: &str) -> Result<Self> {
+        let mut salt = [0_u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let key = MasterKey::derive(password, &salt)?;
+        Ok(Self { salt, key })
+    }
+}
+
+/// Same format as [`encrypt_with_password`], readable by [`decrypt_with_password`]. Every call
+/// takes a fresh random nonce, so reusing the key and salt is safe.
+pub fn encrypt_with_password_key(plain: &[u8], password_key: &PasswordKey) -> Result<Vec<u8>> {
+    let salt = password_key.salt;
     let mut nonce = [0_u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce);
 
-    let key = MasterKey::derive(password, &salt)?;
-    let ciphertext = key
+    let ciphertext = password_key
+        .key
         .cipher()
         .encrypt(XNonce::from_slice(&nonce), plain)
         .map_err(|_| anyhow::anyhow!("encryption failed"))?;
