@@ -25,31 +25,13 @@ use super::{http, installer, Account, Loader};
 const GROUP_INFO_SCAN_LIMIT: usize = 20_000;
 const GROUP_INFO_SEARCH_PAGE_LIMIT: i32 = 100;
 
-/// Database keys I let only trusted modules read or write: credentials, panel and core settings.
-const PROTECTED_KEYS: &[&str] = &[
-    db_key::API_HASH,
-    db_key::API_ID,
-    db_key::PHONE,
-    db_key::PROXY_URL,
-    db_key::SESSION_FILE,
-    db_key::SESSION_FILES,
-    crate::core_settings::key::BOT_TOKEN,
-];
-const PROTECTED_PREFIXES: &[&str] = &[
-    "web.",
-    "core.",
-    "notify.",
-    "pmguard.",
-    "cfg.",
-    "auto.",
-    "antidelete.",
-    "device_profiles.",
-    "export.",
-    "handlers.",
-    "persona.",
-    "recovery.",
-    "ui.premium.",
-];
+/// Namespace of a sandboxed module in the database: `mod.<module>.<key>`. A sandboxed module
+/// sees only its own keys, so it cannot read or change data of other modules or the core.
+pub(crate) const SANDBOX_KEY_PREFIX: &str = "mod.";
+
+pub(crate) fn key_namespace(module: &str) -> String {
+    format!("{SANDBOX_KEY_PREFIX}{module}.")
+}
 /// Where a sandboxed module may read files from: what it downloaded itself. Everything else in
 /// the data directory is sessions, keys, the database, or archives.
 const SANDBOX_FILE_DIRS: &[&str] = &["data/downloads/"];
@@ -117,23 +99,18 @@ impl Ctx {
         self.require_permission("core.admin")
     }
 
-    fn check_key(&self, key: &str) -> mlua::Result<()> {
+    /// Database key behind a module key: unchanged for trusted modules, inside the module
+    /// namespace for sandboxed ones.
+    fn storage_key(&self, key: &str) -> String {
+        format!("{}{key}", self.key_namespace())
+    }
+
+    fn key_namespace(&self) -> String {
         if self.trusted {
-            return Ok(());
+            String::new()
+        } else {
+            key_namespace(&self.module_name)
         }
-        let own_cfg = format!("cfg.{}.", self.module_name);
-        let protected = PROTECTED_KEYS.contains(&key)
-            || (PROTECTED_PREFIXES
-                .iter()
-                .any(|prefix| key.starts_with(prefix))
-                && !key.starts_with(&own_cfg));
-        if protected {
-            return Err(mlua::Error::runtime(format!(
-                "module '{}' may not access protected key '{key}'",
-                self.module_name
-            )));
-        }
-        Ok(())
     }
 
     fn check_file(&self, path: &str) -> mlua::Result<()> {
@@ -447,15 +424,14 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("db_get", |lua, ctx, key: String| async move {
-            ctx.check_key(&key)?;
-            let value = ctx.db.get(&key).await;
+            let value = ctx.db.get(&ctx.storage_key(&key)).await;
             super::to_lua(&lua, &value)
         });
 
         methods.add_async_method(
             "db_set",
             |lua, ctx, (key, value): (String, mlua::Value)| async move {
-                ctx.check_key(&key)?;
+                let key = ctx.storage_key(&key);
                 if value.is_nil() {
                     return ctx.db.remove(&key).await.map_err(rt);
                 }
@@ -465,13 +441,13 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("db_keys", |lua, ctx, prefix: String| async move {
-            ctx.check_key(&prefix)?;
+            let namespace = ctx.key_namespace();
             let keys = ctx
                 .db
-                .keys_with_prefix(&prefix)
+                .keys_with_prefix(&ctx.storage_key(&prefix))
                 .await
                 .into_iter()
-                .filter(|key| ctx.check_key(key).is_ok())
+                .filter_map(|key| key.strip_prefix(&namespace).map(str::to_string))
                 .collect::<Vec<_>>();
             super::to_lua(&lua, &keys)
         });

@@ -12,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::{OnceCell, RwLock};
 use tracing::{error, info, warn};
 
+pub mod budget;
 pub mod context;
 pub mod http;
 pub mod installer;
@@ -96,6 +97,13 @@ impl Loader {
             });
         let lua = Lua::new();
         lua.set_memory_limit(LUA_MEMORY_LIMIT)?;
+        budget::install(&lua)?;
+        // Removed from the shared `string` table, not from a sandbox copy: the string metatable
+        // indexes the shared table, so `("").dump` would still reach a copy-only removal.
+        // A dump exposes the bytecode of trusted modules.
+        lua.globals()
+            .get::<Table>("string")?
+            .set("dump", mlua::Value::Nil)?;
         let ui: Table = lua
             .load(UI_LIBRARY)
             .set_name("ui")
@@ -183,7 +191,7 @@ impl Loader {
             .with_context(|| format!("reading {path:?}"))?;
 
         let static_commands = manifest::module_commands(&source);
-        let manifest = manifest::load_manifest(
+        let mut manifest = manifest::load_manifest(
             path,
             &name,
             static_commands,
@@ -192,19 +200,29 @@ impl Loader {
             crate::bundled::is_pristine(&file_name, &source),
         )
         .await?;
+        // The name selects settings and database keys, so a sandboxed module must not borrow
+        // the name of another module through its manifest.
+        if !manifest.trusted && manifest.name != name {
+            warn!(
+                "module '{name}': manifest name '{}' ignored, sandboxed modules use their file name",
+                manifest.name
+            );
+            manifest.name = name.clone();
+        }
+        let limit = budget::limit_for(manifest.trusted);
         let table: Table = if manifest.trusted {
-            self.lua
-                .load(&source)
-                .set_name(&name)
-                .eval()
+            budget::run(limit, || self.lua.load(&source).set_name(&name).eval())
                 .with_context(|| format!("executing {path:?}"))?
         } else {
-            self.lua
-                .load(&source)
-                .set_name(&name)
-                .set_environment(sandbox_environment(&self.lua, &self.ui)?)
-                .eval()
-                .with_context(|| format!("executing sandboxed {path:?}"))?
+            let env = sandbox_environment(&self.lua, &self.ui)?;
+            budget::run(limit, || {
+                self.lua
+                    .load(&source)
+                    .set_name(&name)
+                    .set_environment(env)
+                    .eval()
+            })
+            .with_context(|| format!("executing sandboxed {path:?}"))?
         };
         let commands = collect_commands(&table)?;
         let mut command_names = commands.keys().cloned().collect::<Vec<_>>();
@@ -566,7 +584,8 @@ impl Loader {
             .get(handler_name.as_str())
             .with_context(|| format!("handler '{handler_name}' not found in module table"))?;
 
-        if let Err(e) = handler.call_async::<()>((ctx, args)).await {
+        let call = handler.call_async::<()>((ctx, args));
+        if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
             let message = clean_lua_error(&e);
             runtime.record_error();
             error!(
@@ -643,7 +662,8 @@ impl Loader {
                     return;
                 }
             };
-            if let Err(e) = handler.call_async::<()>((ctx, event)).await {
+            let call = handler.call_async::<()>((ctx, event));
+            if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
                 self.services.runtime.record_error();
                 warn!(
                     "module '{}' on_message: {}",
@@ -969,8 +989,6 @@ fn sandbox_environment(lua: &Lua, ui: &Table) -> Result<Table> {
         let copy = sandbox_copy(lua, &globals.get::<Table>(name)?, &mut copies)?;
         env.set(name, copy)?;
     }
-    // Without `load` a dumped function is useless, and it exposes the bytecode of trusted code.
-    env.get::<Table>("string")?.set("dump", mlua::Value::Nil)?;
     env.set("ui", sandbox_copy(lua, ui, &mut copies)?)?;
     env.set(
         "json",
@@ -1327,6 +1345,40 @@ return M
         let table = &modules["probe"].table;
         assert!(table.get::<bool>("has_ui").unwrap());
         assert!(!table.get::<bool>("has_os").unwrap());
+        drop(modules);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn sandboxed_modules_cannot_borrow_another_name() {
+        let (loader, dir) = loader_with(&[
+            ("thief.lua", r#"return { commands = {} }"#),
+            (
+                "thief.lua.manifest.json",
+                r#"{ "name": "ai", "permissions": [], "trusted": false }"#,
+            ),
+        ])
+        .await;
+        let modules = loader.modules.read().await;
+        assert_eq!(modules["thief"].manifest.name, "thief");
+        drop(modules);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sandboxed_keys_live_in_the_module_namespace() {
+        assert_eq!(context::key_namespace("probe"), "mod.probe.");
+    }
+
+    #[tokio::test]
+    async fn string_methods_do_not_expose_dump() {
+        let (loader, dir) = loader_with(&[(
+            "probe.lua",
+            r#"local M = { commands = {} } M.dump = ("").dump ~= nil return M"#,
+        )])
+        .await;
+        let modules = loader.modules.read().await;
+        assert!(!modules["probe"].table.get::<bool>("dump").unwrap());
         drop(modules);
         let _ = std::fs::remove_dir_all(dir);
     }

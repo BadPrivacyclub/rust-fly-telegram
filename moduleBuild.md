@@ -270,8 +270,10 @@ and `[text](url)`. Long text is split automatically.
 | `ctx:lang()` | `"en"` or `"ru"` |
 | `ctx:help(query)` | Help text for everything, a module, or a command |
 
-Use a prefix like `mymodule.` for your keys. Keys under `web.`, `core.`, `notify.`,
-`pmguard.`, other modules' `cfg.`, and credentials are off-limits to sandboxed modules.
+Use a prefix like `mymodule.` for your keys. A sandboxed module has its own key space:
+its keys are stored under `mod.<module>.`, `ctx:db_keys` returns them without that prefix,
+and keys of the core and of other modules are out of reach. `<module>` is the file name,
+whatever the manifest says. Trusted modules use the keys as given.
 
 ### Network (`network`)
 
@@ -444,7 +446,10 @@ Every other module runs **sandboxed**:
 
 - Only `assert error ipairs next pairs pcall select tonumber tostring type xpcall`,
   `coroutine math string table utf8`, `ui`, and `json` are available. There is no `os`,
-  `io`, `load`, or `require`.
+  `io`, `load`, or `require`, and `string.dump` is removed.
+- Code that runs for 2 seconds without a pause (an `await` such as `ctx:edit` or an HTTP
+  request) is stopped with an error; `pcall` cannot catch that error. Trusted modules get
+  15 seconds.
 - `ctx` methods require the permissions listed in its manifest:
 
 | Permission | Grants |
@@ -704,7 +709,7 @@ ctx:edit(ui.ok(ru and "Готово" or "Done"))
 | Error | Cause and fix |
 |---|---|
 | `module 'x' needs permission 'network'` | The module is sandboxed. Grant the permission in the panel (Modules → Permissions) or in its manifest |
-| `module 'x' may not access protected key '...'` | Sandboxed modules cannot read credentials, panel or core settings, or other modules' `cfg.*`. Use your own key prefix |
+| `the module ran too long without a pause and was stopped` | A loop ran past the time limit without an `await`. Split the work or check the loop condition |
 | `attempt to call a nil value (method 'xyz')` | The method name is misspelled, or it does not exist. Check the API tables above |
 | `attempt to concatenate a nil value` | A value you joined with `..` is `nil`, often a missing setting or reply. Use `tostring(x)` or a default: `(x or "")` |
 | `attempt to call a nil value (global 'os')` | `os`, `io`, and `load` are unavailable in the sandbox |

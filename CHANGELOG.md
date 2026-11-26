@@ -43,6 +43,16 @@
 
 ### Security
 
+- Lua code that runs without a pause (2 seconds for sandboxed modules, 15 for trusted ones)
+  is stopped, so an endless loop in a module no longer freezes the userbot. `pcall`,
+  `xpcall`, and `coroutine.resume` cannot catch that error.
+- Sandboxed modules keep their data in their own key space (`mod.<module>.`) and can no
+  longer read or change notes, snippets, filters, or other data of other modules. Data that
+  a sandboxed module saved under other keys before is not visible to it any more.
+- A sandboxed module always uses its file name: a manifest can no longer borrow the name of
+  another module to read its settings, such as the API keys of `ai`.
+- `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
+  from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request
   line or a log, and the page removes it from the history. `GET /auth/token` is gone.
 - Panel sessions end after 12 hours without use; a login replaces the session the browser had,
