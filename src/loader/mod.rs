@@ -18,6 +18,7 @@ pub mod http;
 pub mod installer;
 pub mod manifest;
 pub mod meta;
+pub mod metrics;
 pub mod quota;
 pub mod requests;
 pub mod scope;
@@ -71,6 +72,7 @@ pub struct ModuleSummary {
     pub help: ModuleHelp,
     pub config: Vec<ConfigEntry>,
     pub events: bool,
+    pub metrics: metrics::ModuleMetrics,
     /// Permission checks of a sandboxed module since the start.
     pub usage: Vec<quota::PermissionUse>,
 }
@@ -132,6 +134,7 @@ pub struct Loader {
     pub(crate) rate: quota::RateLimiter,
     pub(crate) usage: quota::UsageLog,
     pub(crate) requests: requests::Requests,
+    pub(crate) metrics: metrics::Metrics,
 }
 
 impl Loader {
@@ -152,6 +155,7 @@ impl Loader {
             rate: quota::RateLimiter::default(),
             usage: quota::UsageLog::default(),
             requests: requests::Requests::default(),
+            metrics: metrics::Metrics::default(),
         };
         loader.refresh_premium().await?;
         Ok(loader)
@@ -404,6 +408,10 @@ impl Loader {
                 config,
                 events: module.has_on_message,
                 usage: self.usage.for_module(name),
+                metrics: self.metrics.snapshot(
+                    name,
+                    (!module.manifest.trusted).then(|| module.lua.used_memory()),
+                ),
             });
         }
         summaries.sort_by(|a, b| {
@@ -704,6 +712,56 @@ impl Loader {
         Ok(())
     }
 
+    /// Records a finished call, and switches the module off when it keeps running into the
+    /// execution budget or the memory limit.
+    async fn after_call(
+        &self,
+        name: &str,
+        cpu: std::time::Duration,
+        wall: std::time::Duration,
+        error: Option<&str>,
+    ) {
+        let outcome = metrics::Outcome::of(error);
+        if !self.metrics.record(name, cpu, wall, outcome) {
+            return;
+        }
+        if let Err(error) = self.set_enabled(name, false).await {
+            warn!("could not switch off module '{name}': {error:#}");
+            return;
+        }
+        warn!("module '{name}' switched off after repeated stops");
+        let lang = core_settings::language(&self.services.db).await;
+        let ru = lang == Lang::Ru;
+        let text = if ru {
+            format!(
+                "<b>Модуль <code>{}</code> отключён</b>\nЗа 10 минут он {} раз упёрся в лимит времени или памяти.",
+                escape_html(name),
+                metrics::STRIKES
+            )
+        } else {
+            format!(
+                "<b>Module <code>{}</code> switched off</b>\nIt ran into the time or memory limit {} times within 10 minutes.",
+                escape_html(name),
+                metrics::STRIKES
+            )
+        };
+        self.services
+            .notifier
+            .send_with_actions(
+                Topic::Errors,
+                &text,
+                vec![Action::new(
+                    format!("module.enable:{name}"),
+                    if ru {
+                        "Включить обратно"
+                    } else {
+                        "Turn back on"
+                    },
+                )],
+            )
+            .await;
+    }
+
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
         if !self.modules.read().await.contains_key(name) {
             anyhow::bail!("unknown module '{name}'");
@@ -861,8 +919,12 @@ impl Loader {
             .with_context(|| format!("handler '{handler_name}' not found in module table"))?;
 
         let call = handler.call_async::<()>((ctx, args));
-        if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
-            let message = clean_lua_error(&e);
+        let started = std::time::Instant::now();
+        let (result, cpu) = budget::measured(budget::limit_for(manifest.trusted), call).await;
+        let error = result.as_ref().err().map(clean_lua_error);
+        self.after_call(&manifest.name, cpu, started.elapsed(), error.as_deref())
+            .await;
+        if let Some(message) = error {
             runtime.record_error();
             error!(
                 "module '{}' handler '{handler_name}': {message}",
@@ -883,7 +945,7 @@ impl Loader {
                 .send(
                     Topic::Errors,
                     &format!(
-                        "❌ <b>{}</b> <code>{}.{}</code>\n<pre>{}</pre>",
+                        "<b>{}</b> <code>{}.{}</code>\n<pre>{}</pre>",
                         i18n::tr(lang, "bot.module_error"),
                         escape_html(&manifest.name),
                         escape_html(&handler_name),
@@ -942,16 +1004,19 @@ impl Loader {
                     return;
                 }
             };
-            let runtime = Arc::clone(&self.services.runtime);
+            let loader = Arc::clone(self);
             tokio::spawn(async move {
                 let call = handler.call_async::<()>((ctx, event));
-                if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
-                    runtime.record_error();
-                    warn!(
-                        "module '{}' on_message: {}",
-                        manifest.name,
-                        clean_lua_error(&e)
-                    );
+                let started = std::time::Instant::now();
+                let (result, cpu) =
+                    budget::measured(budget::limit_for(manifest.trusted), call).await;
+                let error = result.err().map(|e| clean_lua_error(&e));
+                loader
+                    .after_call(&manifest.name, cpu, started.elapsed(), error.as_deref())
+                    .await;
+                if let Some(message) = error {
+                    loader.services.runtime.record_error();
+                    warn!("module '{}' on_message: {message}", manifest.name);
                 }
             });
         }
@@ -1463,6 +1528,30 @@ mod tests {
             .set_permissions("x", risky, Default::default(), false)
             .await
             .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_module_that_keeps_getting_stopped_is_switched_off() {
+        let (loader, dir) = loader_with(&[("loop.lua", "return { commands = {} }")]).await;
+        let zero = std::time::Duration::ZERO;
+        let stop = "the module ran too long without a pause and was stopped";
+        for _ in 0..metrics::STRIKES {
+            loader.after_call("loop", zero, zero, Some(stop)).await;
+        }
+        let disabled = core_settings::disabled_modules(&loader.services.db).await;
+        assert!(disabled.contains(&"loop".to_string()));
+        let page = loader.services.notifier.page(0);
+        let event = page.events.last().unwrap();
+        assert_eq!(event.actions[0].id, "module.enable:loop");
+        let summary = loader.summaries().await;
+        let metrics = &summary
+            .iter()
+            .find(|m| m.info.name == "loop")
+            .unwrap()
+            .metrics;
+        assert_eq!(metrics.stops, metrics::STRIKES as u64);
+        assert!(metrics.memory_bytes.is_some_and(|bytes| bytes > 0));
         let _ = std::fs::remove_dir_all(dir);
     }
 

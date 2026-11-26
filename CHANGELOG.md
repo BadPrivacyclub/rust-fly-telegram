@@ -4,6 +4,11 @@
 
 ### New
 
+- **Module metrics** on the Modules page: calls, CPU time per minute, the 95th percentile of
+  the call duration, memory of each sandboxed module, errors, stops, and a sparkline of the
+  last hour. A module stopped by the time or memory limit 5 times within 10 minutes is
+  switched off, with a **Turn back on** button in the inbox.
+
 - **Permission requests**: a sandboxed module that calls something it may not use asks in the
   inbox instead of only failing. Allow for 10 minutes, allow in this chat, for this host, or
   on this account, allow everywhere, or refuse for good; or answer with `.grant <id>`. A

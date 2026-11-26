@@ -75,6 +75,20 @@ async fn run_action(state: &AppState, action: &str, lang: Lang) -> anyhow::Resul
             notifier.resolve(&format!("pm.block:{user_id}"), outcome);
             Ok(outcome.to_string())
         }
+        "module.enable" => {
+            let loader = state
+                .loader
+                .as_ref()
+                .context("modules are not loaded yet")?;
+            loader.set_enabled(subject, true).await?;
+            let outcome = if lang == Lang::Ru {
+                "Включён"
+            } else {
+                "Turned on"
+            };
+            notifier.resolve(action, outcome);
+            Ok(outcome.to_string())
+        }
         "perm.once" | "perm.scope" | "perm.always" | "perm.deny" => {
             let loader = state
                 .loader

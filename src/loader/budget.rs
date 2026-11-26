@@ -95,9 +95,26 @@ pub fn run<T>(limit: Duration, f: impl FnOnce() -> T) -> T {
 }
 
 /// Wraps an async Lua call so that every poll gets its own deadline.
+#[cfg(test)]
 pub fn limited<F: Future>(limit: Duration, future: F) -> impl Future<Output = F::Output> {
     let mut future = Box::pin(future);
     std::future::poll_fn(move |cx| run(limit, || future.as_mut().poll(cx)))
+}
+
+/// Like [`limited`], and also returns the time spent inside polls: the time the call kept a
+/// thread busy, without the time it waited.
+pub fn measured<F: Future>(
+    limit: Duration,
+    future: F,
+) -> impl Future<Output = (F::Output, Duration)> {
+    let mut future = Box::pin(future);
+    let mut spent = Duration::ZERO;
+    std::future::poll_fn(move |cx| {
+        let started = Instant::now();
+        let poll = run(limit, || future.as_mut().poll(cx));
+        spent += started.elapsed();
+        poll.map(|output| (output, spent))
+    })
 }
 
 #[cfg(test)]
