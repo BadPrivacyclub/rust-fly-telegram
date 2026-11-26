@@ -51,6 +51,9 @@
   a sandboxed module saved under other keys before is not visible to it any more.
 - A sandboxed module always uses its file name: a manifest can no longer borrow the name of
   another module to read its settings, such as the API keys of `ai`.
+- Sandboxed modules with the `network` permission reach public servers only. Requests to
+  `localhost`, loopback, private, link-local, and cloud metadata addresses are refused,
+  also after a redirect and when a name resolves to such an address.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request

@@ -277,6 +277,10 @@ whatever the manifest says. Trusted modules use the keys as given.
 
 ### Network (`network`)
 
+Sandboxed modules reach public servers only: requests to `localhost`, loopback, private,
+link-local, and other special addresses are refused, also after a redirect and when a name
+resolves to such an address. Trusted modules can reach any address.
+
 | Method | Description |
 |---|---|
 | `ctx:fetch(url, options)` | **Recommended.** Never raises for network problems: returns `{ ok, status, text, json, error }` |

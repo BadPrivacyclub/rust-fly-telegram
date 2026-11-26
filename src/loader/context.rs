@@ -95,6 +95,10 @@ impl Ctx {
         }
     }
 
+    fn reach(&self) -> http::Reach {
+        http::Reach::for_module(self.trusted)
+    }
+
     fn require_admin(&self) -> mlua::Result<()> {
         self.require_permission("core.admin")
     }
@@ -1073,12 +1077,14 @@ impl UserData for Ctx {
 
         methods.add_async_method("http_get", |_, ctx, url: String| async move {
             ctx.require_permission("network")?;
-            http::text("GET", &url, None, Vec::new()).await.map_err(rt)
+            http::text(ctx.reach(), "GET", &url, None, Vec::new())
+                .await
+                .map_err(rt)
         });
 
         methods.add_async_method("http_json_get", |lua, ctx, url: String| async move {
             ctx.require_permission("network")?;
-            let value = http::json("GET", &url, None, Vec::new())
+            let value = http::json(ctx.reach(), "GET", &url, None, Vec::new())
                 .await
                 .map_err(rt)?;
             super::to_lua(&lua, &value)
@@ -1096,7 +1102,9 @@ impl UserData for Ctx {
             )| async move {
                 ctx.require_permission("network")?;
                 let headers = header_pairs(headers)?;
-                http::text(&method, &url, body, headers).await.map_err(rt)
+                http::text(ctx.reach(), &method, &url, body, headers)
+                    .await
+                    .map_err(rt)
             },
         );
 
@@ -1112,7 +1120,9 @@ impl UserData for Ctx {
             )| async move {
                 ctx.require_permission("network")?;
                 let headers = header_pairs(headers)?;
-                let value = http::json(&method, &url, body, headers).await.map_err(rt)?;
+                let value = http::json(ctx.reach(), &method, &url, body, headers)
+                    .await
+                    .map_err(rt)?;
                 super::to_lua(&lua, &value)
             },
         );
@@ -1134,9 +1144,17 @@ impl UserData for Ctx {
                 ctx.check_file(&path)?;
                 let fields = field_pairs(fields)?;
                 let headers = header_pairs(headers)?;
-                let value = http_multipart_json(&method, &url, &file_field, &path, fields, headers)
-                    .await
-                    .map_err(rt)?;
+                let value = http_multipart_json(
+                    ctx.reach(),
+                    &method,
+                    &url,
+                    &file_field,
+                    &path,
+                    fields,
+                    headers,
+                )
+                .await
+                .map_err(rt)?;
                 super::to_lua(&lua, &value)
             },
         );
@@ -1146,7 +1164,8 @@ impl UserData for Ctx {
             "fetch",
             |lua, ctx, (url, opts): (String, Option<mlua::Table>)| async move {
                 ctx.require_permission("network")?;
-                let request = fetch_request(&lua, url, opts)?;
+                let mut request = fetch_request(&lua, url, opts)?;
+                request.reach = ctx.reach();
                 let result = lua.create_table()?;
                 match http::send(request).await {
                     Ok(response) => {
@@ -1198,7 +1217,7 @@ impl UserData for Ctx {
             |_, ctx, (url, name): (String, Option<String>)| async move {
                 ctx.require_permission("network")?;
                 ctx.require_permission("telegram.media")?;
-                download_url_to_file(&url, name.as_deref())
+                download_url_to_file(ctx.reach(), &url, name.as_deref())
                     .await
                     .map_err(rt)
             },
@@ -1490,7 +1509,11 @@ async fn download_replied_media(ctx: Ctx, name: Option<String>) -> anyhow::Resul
     Ok(path.to_string_lossy().to_string())
 }
 
-async fn download_url_to_file(url: &str, name: Option<&str>) -> anyhow::Result<String> {
+async fn download_url_to_file(
+    reach: http::Reach,
+    url: &str,
+    name: Option<&str>,
+) -> anyhow::Result<String> {
     let url = url.trim();
     http::check_url(url)?;
     let file_name = name
@@ -1507,7 +1530,7 @@ async fn download_url_to_file(url: &str, name: Option<&str>) -> anyhow::Result<S
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    http::download(url, &path).await?;
+    http::download(reach, url, &path).await?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -1638,6 +1661,7 @@ fn field_pairs(fields: Option<mlua::Table>) -> mlua::Result<Vec<(String, String)
 }
 
 async fn http_multipart_json(
+    reach: http::Reach,
     method: &str,
     url: &str,
     file_field: &str,
@@ -1664,7 +1688,7 @@ async fn http_multipart_json(
     for (name, value) in fields {
         form = form.text(name, value);
     }
-    http::multipart_json(method, url, form, headers).await
+    http::multipart_json(reach, method, url, form, headers).await
 }
 
 async fn sanitize_text(ctx: &Ctx, text: &str) -> String {
