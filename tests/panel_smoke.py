@@ -70,11 +70,13 @@ test = r'''
   await document.querySelector("[data-restore]").onclick();
   let dialog=document.querySelector("dialog");
   check(!!dialog,"2FA dialog shown");
-  dialog.querySelector("input").value="one-time 2FA test";
+  // Built from parts: the page source holds this script, and body text includes it.
+  const secret=["one-time","2FA","test"].join(" ");
+  dialog.querySelector("input").value=secret;
   await dialog.querySelector("form").onsubmit(new Event("submit",{cancelable:true}));
   check(!document.querySelector("dialog"),"2FA dialog cleared after login");
   check(calls.some(c=>c.path==="/api/recovery/password"&&c.body.token==="test-token"),"2FA routed to pending login");
-  check(!document.body.textContent.includes("one-time 2FA test"),"2FA not rendered");
+  check(!document.body.textContent.includes(secret),"2FA not rendered");
  }catch(e){failures.push(e.stack||e.message);}
  document.getElementById("results").textContent=JSON.stringify({ok:failures.length===0,failures});
 })();
