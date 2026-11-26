@@ -37,6 +37,9 @@ pub(crate) const UI_LIBRARY: &str = include_str!("ui.lua");
 pub const READ_PERMISSION: &str = "telegram.read";
 
 struct Module {
+    /// The shared state for trusted modules, a state of its own for a sandboxed one.
+    lua: Lua,
+    ui: Table,
     table: Table,
     commands: HashMap<String, String>,
     manifest: ModuleManifest,
@@ -79,6 +82,41 @@ pub struct ConfigEntry {
 
 /// A module can't take the whole machine down with one `string.rep`.
 const LUA_MEMORY_LIMIT: usize = 1024 * 1024 * 1024;
+/// Memory of the state of one sandboxed module.
+const SANDBOX_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+
+/// A Lua state with the hook from [`budget`], `ui`, and `json`, and without `string.dump`.
+fn new_state(memory_limit: usize) -> Result<(Lua, Table)> {
+    let lua = Lua::new();
+    lua.set_memory_limit(memory_limit)?;
+    budget::install(&lua)?;
+    // Removed from the shared `string` table, not from a sandbox copy: the string metatable
+    // indexes the shared table, so `("").dump` would still reach a copy-only removal.
+    // A dump exposes the bytecode of trusted modules.
+    lua.globals()
+        .get::<Table>("string")?
+        .set("dump", mlua::Value::Nil)?;
+    let ui: Table = lua
+        .load(UI_LIBRARY)
+        .set_name("ui")
+        .eval()
+        .context("loading ui library")?;
+    lua.globals().set("ui", ui.clone())?;
+    let json = json_library(&lua)?;
+    lua.globals().set("json", json.clone())?;
+    ui.set("__json", json)?;
+    Ok((lua, ui))
+}
+
+/// Hands the premium icon ids to `ui.icons` of one state.
+fn set_premium(lua: &Lua, ui: &Table, ids: &[(String, i64)]) -> Result<()> {
+    let table = lua.create_table()?;
+    for (name, id) in ids {
+        table.set(name.as_str(), id.to_string())?;
+    }
+    ui.set("__premium", table)?;
+    Ok(())
+}
 
 pub struct Loader {
     lua: Arc<Lua>,
@@ -97,24 +135,7 @@ impl Loader {
                 warn!("could not load signing public key: {e}");
                 None
             });
-        let lua = Lua::new();
-        lua.set_memory_limit(LUA_MEMORY_LIMIT)?;
-        budget::install(&lua)?;
-        // Removed from the shared `string` table, not from a sandbox copy: the string metatable
-        // indexes the shared table, so `("").dump` would still reach a copy-only removal.
-        // A dump exposes the bytecode of trusted modules.
-        lua.globals()
-            .get::<Table>("string")?
-            .set("dump", mlua::Value::Nil)?;
-        let ui: Table = lua
-            .load(UI_LIBRARY)
-            .set_name("ui")
-            .eval()
-            .context("loading ui library")?;
-        lua.globals().set("ui", ui.clone())?;
-        let json = json_library(&lua)?;
-        lua.globals().set("json", json.clone())?;
-        ui.set("__json", json)?;
+        let (lua, ui) = new_state(LUA_MEMORY_LIMIT)?;
         let loader = Self {
             lua: Arc::new(lua),
             services,
@@ -128,15 +149,23 @@ impl Loader {
         Ok(loader)
     }
 
-    /// I hand the current premium icon ids to `ui.icons`.
+    /// Hands the current premium icon ids to `ui.icons` of every state.
     pub async fn refresh_premium(&self) -> Result<()> {
-        let ids = crate::premium::load(&self.services.db).await;
-        let table = self.lua.create_table()?;
-        for (name, id) in ids {
-            table.set(name, id.to_string())?;
+        let ids = self.premium_ids().await;
+        set_premium(&self.lua, &self.ui, &ids)?;
+        for module in self.modules.read().await.values() {
+            if !module.manifest.trusted {
+                set_premium(&module.lua, &module.ui, &ids)?;
+            }
         }
-        self.ui.set("__premium", table)?;
         Ok(())
+    }
+
+    async fn premium_ids(&self) -> Vec<(String, i64)> {
+        crate::premium::load(&self.services.db)
+            .await
+            .into_iter()
+            .collect()
     }
 
     pub fn modules_dir(&self) -> &Path {
@@ -213,14 +242,20 @@ impl Loader {
             manifest.name = name.clone();
         }
         let limit = budget::limit_for(manifest.trusted);
+        let (lua, ui) = if manifest.trusted {
+            ((*self.lua).clone(), self.ui.clone())
+        } else {
+            let (lua, ui) = new_state(SANDBOX_MEMORY_LIMIT)?;
+            set_premium(&lua, &ui, &self.premium_ids().await)?;
+            (lua, ui)
+        };
         let table: Table = if manifest.trusted {
-            budget::run(limit, || self.lua.load(&source).set_name(&name).eval())
+            budget::run(limit, || lua.load(&source).set_name(&name).eval())
                 .with_context(|| format!("executing {path:?}"))?
         } else {
-            let env = sandbox_environment(&self.lua, &self.ui)?;
+            let env = sandbox_environment(&lua, &ui)?;
             budget::run(limit, || {
-                self.lua
-                    .load(&source)
+                lua.load(&source)
                     .set_name(&name)
                     .set_environment(env)
                     .eval()
@@ -230,8 +265,8 @@ impl Loader {
         let commands = collect_commands(&table)?;
         let mut command_names = commands.keys().cloned().collect::<Vec<_>>();
         command_names.sort();
-        let help = meta::parse_help(&self.lua, &table, &command_names);
-        let config = meta::parse_config(&self.lua, &table);
+        let help = meta::parse_help(&lua, &table, &command_names);
+        let config = meta::parse_config(&lua, &table);
         let has_on_message = table.get::<Function>("on_message").is_ok();
         if has_on_message
             && !manifest.trusted
@@ -251,6 +286,8 @@ impl Loader {
         self.modules.write().await.insert(
             name,
             Module {
+                lua,
+                ui,
                 table,
                 commands,
                 manifest,
@@ -641,7 +678,7 @@ impl Loader {
                         .table
                         .get::<Function>("on_message")
                         .ok()
-                        .map(|handler| (handler, module.manifest.clone()))
+                        .map(|handler| (handler, module.manifest.clone(), module.lua.clone()))
                 })
                 .collect::<Vec<_>>()
         };
@@ -654,9 +691,9 @@ impl Loader {
         let own_id = account.own_user_id.get().copied();
         // Each listener runs in its own task, so a module waiting on the network does not hold
         // up the others. Every listener gets its own event table, which it may change freely.
-        for (handler, manifest) in listeners {
+        for (handler, manifest, lua) in listeners {
             let ctx = Ctx::new(Arc::clone(self), &account, &manifest).with_message(msg.clone());
-            let event = match context::message_table(&self.lua, &msg, own_id, is_command) {
+            let event = match context::message_table(&lua, &msg, own_id, is_command) {
                 Ok(event) => event,
                 Err(e) => {
                     warn!("could not build message event: {e}");
@@ -1385,6 +1422,36 @@ return M
         .await;
         let modules = loader.modules.read().await;
         assert_eq!(modules["thief"].manifest.name, "thief");
+        drop(modules);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn each_sandboxed_module_has_its_own_state_and_memory_limit() {
+        let (loader, dir) = loader_with(&[
+            (
+                "greedy.lua",
+                r#"local M = { commands = {} }
+                M.ok = pcall(string.rep, "x", 128 * 1024 * 1024)
+                return M"#,
+            ),
+            ("calm.lua", r#"return { commands = {} }"#),
+        ])
+        .await;
+        let modules = loader.modules.read().await;
+        assert!(!modules["greedy"].table.get::<bool>("ok").unwrap());
+        let globals = |lua: &Lua| lua.globals().to_pointer();
+        assert_ne!(
+            globals(&modules["greedy"].lua),
+            globals(&modules["calm"].lua)
+        );
+        assert_ne!(globals(&modules["greedy"].lua), globals(&loader.lua));
+        let fits: bool = loader
+            .lua
+            .load(r#"return pcall(string.rep, "x", 128 * 1024 * 1024)"#)
+            .eval()
+            .unwrap();
+        assert!(fits);
         drop(modules);
         let _ = std::fs::remove_dir_all(dir);
     }

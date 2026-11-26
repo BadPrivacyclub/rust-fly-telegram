@@ -62,6 +62,8 @@
 - When several modules declare the same command, a trusted module runs it before a sandboxed
   one, so a sandboxed module can no longer take over a built-in command such as `.cfg` and
   receive what you type after it. Before, the choice depended on map order.
+- Every sandboxed module runs in a Lua state of its own, limited to 64 MiB. A module that
+  runs out of memory no longer affects other modules, and sandboxed modules run in parallel.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request
