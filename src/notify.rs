@@ -37,6 +37,8 @@ pub enum Topic {
     Module,
     /// Results of background jobs: exports, cleanup, bulk actions.
     Jobs,
+    /// Permission requests of sandboxed modules.
+    Permissions,
 }
 
 impl Topic {
@@ -48,6 +50,7 @@ impl Topic {
             Topic::AntiDelete => (key::NOTIFY_ANTIDELETE, false),
             Topic::Module => (key::NOTIFY_MODULES, true),
             Topic::Jobs => (key::NOTIFY_JOBS, true),
+            Topic::Permissions => (key::NOTIFY_PERMISSIONS, true),
         }
     }
 }

@@ -1,5 +1,6 @@
 //! The inbox: notifications for the owner, some with actions to answer from the panel.
 
+use anyhow::Context;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -73,6 +74,14 @@ async fn run_action(state: &AppState, action: &str, lang: Lang) -> anyhow::Resul
             notifier.resolve(&format!("pm.allow:{user_id}"), outcome);
             notifier.resolve(&format!("pm.block:{user_id}"), outcome);
             Ok(outcome.to_string())
+        }
+        "perm.once" | "perm.scope" | "perm.always" | "perm.deny" => {
+            let loader = state
+                .loader
+                .as_ref()
+                .context("modules are not loaded yet")?;
+            let choice = kind.trim_start_matches("perm.");
+            loader.decide_request(subject.parse()?, choice).await
         }
         _ => anyhow::bail!("unknown action {action}"),
     }

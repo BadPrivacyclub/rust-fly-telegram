@@ -21,6 +21,7 @@ pub mod key {
     pub const NOTIFY_ANTIDELETE: &str = "notify.antidelete";
     pub const NOTIFY_MODULES: &str = "notify.modules";
     pub const NOTIFY_JOBS: &str = "notify.jobs";
+    pub const NOTIFY_PERMISSIONS: &str = "notify.permissions";
     pub const NOTIFY_CHANNEL: &str = "notify.channel";
 }
 
@@ -49,6 +50,7 @@ pub const TOGGLES: &[(&str, &str, bool)] = &[
     (key::NOTIFY_STARTUP, "set.notify_startup", true),
     (key::NOTIFY_ANTIDELETE, "set.notify_antidelete", false),
     (key::NOTIFY_JOBS, "set.notify_jobs", true),
+    (key::NOTIFY_PERMISSIONS, "set.notify_permissions", true),
     (key::NOTIFY_CHANNEL, "set.notify_channel", false),
 ];
 
@@ -88,7 +90,7 @@ pub const SUDO_DENYLIST: &[&str] = &[
     "taskbot",
     "note", "notes", "alias", "stats", "ai", "ask", "summarize", "translate", "transcribe",
     "acc", "cleanup", "readall", "archive", "muteall", "export", "jobs", "profile", "auto",
-    "away", "persona", "unpersona",
+    "away", "persona", "unpersona", "grant",
 ];
 
 pub async fn prefixes(db: &Database) -> Vec<String> {

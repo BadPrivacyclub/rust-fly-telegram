@@ -859,6 +859,7 @@ mod tests {
             function ctx:sudo_list()     return { 1 } end
             function ctx:sudo_set(v)     end
             function ctx:panel_link()    return "http://127.0.0.1:8080/auth#t=x" end
+            function ctx:perm_decide(id, c)  return "Allowed" end
             function ctx:restart()       end
             function ctx:check_update()  return { current = "0.2.0", latest = "0.3.0", newer = true, notes = "n", url = "u", has_binary = true, source_checkout = false } end
             function ctx:self_update()   return true end

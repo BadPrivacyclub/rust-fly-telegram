@@ -19,6 +19,7 @@ pub mod installer;
 pub mod manifest;
 pub mod meta;
 pub mod quota;
+pub mod requests;
 pub mod scope;
 
 use ed25519_dalek::VerifyingKey;
@@ -26,7 +27,7 @@ use ed25519_dalek::VerifyingKey;
 use crate::app::Services;
 use crate::core_settings;
 use crate::i18n::{self, Lang};
-use crate::notify::{escape_html, Topic};
+use crate::notify::{escape_html, Action, Topic};
 use crate::{config, crypto, telegram};
 use context::Ctx;
 use manifest::{ModuleInfo, ModuleManifest};
@@ -130,6 +131,7 @@ pub struct Loader {
     ui: Table,
     pub(crate) rate: quota::RateLimiter,
     pub(crate) usage: quota::UsageLog,
+    pub(crate) requests: requests::Requests,
 }
 
 impl Loader {
@@ -149,6 +151,7 @@ impl Loader {
             ui,
             rate: quota::RateLimiter::default(),
             usage: quota::UsageLog::default(),
+            requests: requests::Requests::default(),
         };
         loader.refresh_premium().await?;
         Ok(loader)
@@ -469,9 +472,236 @@ impl Loader {
             )
         };
         manifest.scopes = scope::clean(scopes, &permissions);
+        self.forget_denials(name, &permissions).await?;
         manifest.permissions = permissions;
         tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?).await?;
         self.load_file(&module_path).await
+    }
+
+    /// Posts a permission request to the inbox, with the answers that fit it.
+    pub(crate) async fn post_request(&self, id: u64, subject: &requests::Subject) {
+        let db = &self.services.db;
+        let lang = core_settings::language(db).await;
+        let ru = lang == Lang::Ru;
+        let mut lines = vec![format!(
+            "<b>{}</b> <code>{}</code>: <code>{}</code>",
+            escape_html(if ru {
+                "Модуль просит разрешение"
+            } else {
+                "A module asks for a permission"
+            }),
+            escape_html(&subject.module),
+            escape_html(&subject.permission)
+        )];
+        if let Some(host) = &subject.host {
+            lines.push(format!(
+                "{} {}",
+                if ru { "Хост:" } else { "Host:" },
+                escape_html(host)
+            ));
+        }
+        if let Some(chat) = subject.chat {
+            lines.push(format!(
+                "{} <code>{chat}</code>",
+                if ru { "Чат:" } else { "Chat:" }
+            ));
+        }
+        lines.push(format!(
+            "{} {}",
+            if ru { "Аккаунт:" } else { "Account:" },
+            escape_html(&subject.account)
+        ));
+        let prefix = core_settings::prefixes(db).await.remove(0);
+        lines.push(format!(
+            "{} <code>{prefix}grant {id}</code>",
+            if ru {
+                "Или в Telegram:"
+            } else {
+                "Or in Telegram:"
+            }
+        ));
+        let scope_label = match (
+            &subject.host,
+            subject.chat,
+            subject.permission.starts_with("telegram."),
+        ) {
+            (Some(host), _, _) => format!(
+                "{} {host}",
+                if ru {
+                    "Разрешить для"
+                } else {
+                    "Allow for"
+                }
+            ),
+            (None, Some(_), true) => (if ru {
+                "Разрешить в этом чате"
+            } else {
+                "Allow in this chat"
+            })
+            .to_string(),
+            _ => (if ru {
+                "Разрешить на этом аккаунте"
+            } else {
+                "Allow on this account"
+            })
+            .to_string(),
+        };
+        let mut actions = vec![Action::new(
+            format!("perm.once:{id}"),
+            if ru {
+                "Разрешить на 10 минут"
+            } else {
+                "Allow for 10 minutes"
+            },
+        )];
+        if !requests::MANUAL_ONLY.contains(&subject.permission.as_str()) {
+            actions.push(Action::new(format!("perm.scope:{id}"), scope_label));
+            actions.push(Action::new(
+                format!("perm.always:{id}"),
+                if ru {
+                    "Разрешить везде"
+                } else {
+                    "Allow everywhere"
+                },
+            ));
+        }
+        actions.push(
+            Action::new(
+                format!("perm.deny:{id}"),
+                if ru {
+                    "Запретить навсегда"
+                } else {
+                    "Refuse for good"
+                },
+            )
+            .danger(),
+        );
+        self.services
+            .notifier
+            .send_with_actions(Topic::Permissions, &lines.join("\n"), actions)
+            .await;
+    }
+
+    /// Answers permission request `id` with `once`, `scope`, `always`, or `deny`, and returns
+    /// what to show in place of the buttons.
+    pub async fn decide_request(&self, id: u64, choice: &str) -> Result<String> {
+        let subject = self
+            .requests
+            .subject(id)
+            .context("this request was already answered or is gone")?;
+        let lang = core_settings::language(&self.services.db).await;
+        let ru = lang == Lang::Ru;
+        let outcome = match choice {
+            "once" => {
+                self.requests.allow_once(&subject);
+                self.requests.close(id, requests::Decision::Allowed);
+                if ru {
+                    "Разрешено на 10 минут"
+                } else {
+                    "Allowed for 10 minutes"
+                }
+            }
+            "scope" | "always" => {
+                if requests::MANUAL_ONLY.contains(&subject.permission.as_str()) {
+                    anyhow::bail!(
+                        "'{}' is granted only on the module page, after a look at the source",
+                        subject.permission
+                    );
+                }
+                self.grant_from_request(&subject, choice == "always")
+                    .await?;
+                self.requests.close(id, requests::Decision::Allowed);
+                if ru {
+                    "Разрешено"
+                } else {
+                    "Allowed"
+                }
+            }
+            "deny" => {
+                let db = &self.services.db;
+                let mut denied = requests::denied_set(&db.get(requests::DENIED_KEY).await);
+                denied.insert(requests::denied_entry(&subject.module, &subject.permission));
+                db.set(requests::DENIED_KEY, serde_json::to_value(denied)?)
+                    .await?;
+                self.requests.close(id, requests::Decision::Denied);
+                if ru {
+                    "Запрещено"
+                } else {
+                    "Refused"
+                }
+            }
+            other => anyhow::bail!("unknown answer '{other}'"),
+        };
+        for kind in ["once", "scope", "always", "deny"] {
+            self.services
+                .notifier
+                .resolve(&format!("perm.{kind}:{id}"), outcome);
+        }
+        Ok(outcome.to_string())
+    }
+
+    /// Grants the permission of a request for good: within the scope of the call, or
+    /// everywhere.
+    async fn grant_from_request(
+        &self,
+        subject: &requests::Subject,
+        everywhere: bool,
+    ) -> Result<()> {
+        let (mut permissions, mut scopes) = self
+            .modules
+            .read()
+            .await
+            .get(&subject.module)
+            .map(|module| {
+                (
+                    module.manifest.permissions.clone(),
+                    module.manifest.scopes.clone(),
+                )
+            })
+            .with_context(|| format!("unknown module '{}'", subject.module))?;
+        let was_granted = permissions.contains(&subject.permission);
+        if !was_granted {
+            permissions.push(subject.permission.clone());
+        }
+        if everywhere {
+            scopes.remove(&subject.permission);
+        } else {
+            let scope = scopes.entry(subject.permission.clone()).or_default();
+            if !was_granted {
+                *scope = scope::Scope::default();
+            }
+            match (
+                &subject.host,
+                subject.chat,
+                subject.permission.starts_with("telegram."),
+            ) {
+                (Some(host), _, _) => scope.hosts.push(host.clone()),
+                (None, Some(chat), true) => scope.chats.push(chat),
+                _ => scope.accounts.push(subject.account.clone()),
+            }
+        }
+        self.set_permissions(&subject.module, permissions, scopes, false)
+            .await
+    }
+
+    /// Clears refusals for good of permissions the module now has.
+    async fn forget_denials(&self, name: &str, permissions: &[String]) -> Result<()> {
+        let db = &self.services.db;
+        let denied = requests::denied_set(&db.get(requests::DENIED_KEY).await);
+        let kept = denied
+            .iter()
+            .filter(|entry| {
+                !permissions
+                    .iter()
+                    .any(|p| **entry == requests::denied_entry(name, p))
+            })
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        if kept.len() != denied.len() {
+            db.set(requests::DENIED_KEY, serde_json::to_value(kept)?)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
@@ -623,7 +853,9 @@ impl Loader {
             return Ok(());
         }
 
-        let ctx = Ctx::new(Arc::clone(self), &account, &manifest).with_message(msg.clone());
+        let ctx = Ctx::new(Arc::clone(self), &account, &manifest)
+            .with_message(msg.clone())
+            .interactive();
         let handler: Function = table
             .get(handler_name.as_str())
             .with_context(|| format!("handler '{handler_name}' not found in module table"))?;
@@ -1231,6 +1463,62 @@ mod tests {
             .set_permissions("x", risky, Default::default(), false)
             .await
             .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn permission_requests_are_answered_from_the_inbox() {
+        let (loader, dir) = loader_with(&[("x.lua", "return { commands = {} }")]).await;
+        let subject = |permission: &str, host: Option<&str>| requests::Subject {
+            module: "x".into(),
+            permission: permission.into(),
+            host: host.map(str::to_string),
+            chat: Some(-100),
+            account: "main.session".into(),
+        };
+        let open = |subject: &requests::Subject| match loader.requests.open(subject.clone()) {
+            requests::Opened::New(id, _) | requests::Opened::Existing(id, _) => id,
+        };
+
+        let network = subject("network", Some("api.example.com"));
+        let id = open(&network);
+        loader.post_request(id, &network).await;
+        let page = loader.services.notifier.page(0);
+        assert!(page.events[0].text.contains("api.example.com"));
+        assert_eq!(page.events[0].actions.len(), 4);
+        loader.decide_request(id, "scope").await.unwrap();
+        let modules = loader.modules.read().await;
+        let manifest = &modules["x"].manifest;
+        assert_eq!(manifest.permissions, vec!["network"]);
+        assert_eq!(manifest.scopes["network"].hosts, vec!["api.example.com"]);
+        drop(modules);
+        assert!(loader.services.notifier.page(0).events[0]
+            .resolved
+            .is_some());
+        assert!(loader.decide_request(id, "scope").await.is_err());
+
+        let read = subject("telegram.read", None);
+        let id = open(&read);
+        loader.decide_request(id, "deny").await.unwrap();
+        let denied = requests::denied_set(&loader.services.db.get(requests::DENIED_KEY).await);
+        assert!(denied.contains("x:telegram.read"));
+        loader
+            .set_permissions(
+                "x",
+                vec!["network".into(), "telegram.read".into()],
+                Default::default(),
+                true,
+            )
+            .await
+            .unwrap();
+        let denied = requests::denied_set(&loader.services.db.get(requests::DENIED_KEY).await);
+        assert!(!denied.contains("x:telegram.read"));
+
+        let shell = subject("shell", None);
+        let id = open(&shell);
+        assert!(loader.decide_request(id, "always").await.is_err());
+        loader.decide_request(id, "once").await.unwrap();
+        assert!(loader.requests.allowed_once("x", "shell", None));
         let _ = std::fs::remove_dir_all(dir);
     }
 

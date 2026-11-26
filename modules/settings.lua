@@ -10,6 +10,7 @@ M.commands = {
     cfg = "cfg_cmd",
     sudo = "sudo_cmd",
     panel = "panel_cmd",
+    grant = "grant_cmd",
 }
 
 M.help = {
@@ -23,6 +24,7 @@ M.help = {
         cfg = { args = "[module] [key] [value|reset]", desc = "View and change module settings" },
         sudo = { args = "add|del [user_id] | list", desc = "Users allowed to run safe commands" },
         panel = "One-time login link for the web panel",
+        grant = { args = "<id> [once|scope|always|deny]", desc = "Answer a permission request of a sandboxed module" },
     },
 }
 
@@ -346,6 +348,20 @@ function M.panel_cmd(ctx, args)
         ctx:send_saved(text)
         ctx:edit(ui.ok("Panel link sent to Saved Messages"))
     end
+end
+
+local GRANT_CHOICES = { once = true, scope = true, always = true, deny = true }
+
+function M.grant_cmd(ctx, args)
+    local id, choice = ui.split(args)
+    choice = choice ~= "" and choice:lower() or "once"
+    if not tonumber(id) or not GRANT_CHOICES[choice] then
+        usage(ctx, "grant", { "<id> once", "<id> scope", "<id> always", "<id> deny" },
+            "once: 10 minutes; scope: this chat, host, or account; always: everywhere; deny: for good")
+        return
+    end
+    local outcome = ctx:perm_decide(tonumber(id), choice)
+    ctx:edit(ui.ok(outcome, "#" .. id))
 end
 
 return M

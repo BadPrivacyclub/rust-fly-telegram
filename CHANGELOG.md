@@ -4,6 +4,12 @@
 
 ### New
 
+- **Permission requests**: a sandboxed module that calls something it may not use asks in the
+  inbox instead of only failing. Allow for 10 minutes, allow in this chat, for this host, or
+  on this account, allow everywhere, or refuse for good; or answer with `.grant <id>`. A
+  command waits up to a minute for the answer. Permissions that hand over the computer or
+  the account are granted only on the module page.
+
 - **Permission scopes** (Modules, Permissions, or `scopes` in the manifest): a permission of
   a sandboxed module can be limited to some hosts (`network`), chats (`telegram.*`), or
   accounts. Messages from other chats never reach the module, and requests to other hosts

@@ -78,6 +78,8 @@ pub struct Ctx {
     trusted: bool,
     /// The chat of the message the call is about, in the Bot API format.
     chat_id: Option<i64>,
+    /// A command the owner just sent, which may wait for a permission answer.
+    interactive: bool,
     pub message: Arc<Mutex<Option<Message>>>,
 }
 
@@ -96,7 +98,16 @@ impl Ctx {
             scopes: manifest.scopes.clone(),
             trusted: manifest.trusted,
             chat_id: None,
+            interactive: false,
             message: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Marks the call as a command, which may wait for a permission answer.
+    pub fn interactive(self) -> Self {
+        Self {
+            interactive: true,
+            ..self
         }
     }
 
@@ -119,20 +130,102 @@ impl Ctx {
         )
     }
 
-    fn require_permission(&self, permission: &str) -> mlua::Result<()> {
-        let allowed = self.has_permission(permission);
-        if !self.trusted {
-            self.loader
-                .usage
-                .record(&self.module_name, permission, allowed);
+    async fn require_permission(&self, permission: &str) -> mlua::Result<()> {
+        self.require(permission, None).await
+    }
+
+    /// `network` for a request to `url`, so a host scope applies and a request can offer to
+    /// allow just that host.
+    async fn require_network(&self, url: &str) -> mlua::Result<()> {
+        self.require("network", Some(http::host_of(url))).await
+    }
+
+    /// Checks a permission. When it is missing, a sandboxed module asks the owner through the
+    /// inbox: a command waits for the answer, a background call fails at once.
+    async fn require(&self, permission: &str, host: Option<String>) -> mlua::Result<()> {
+        let in_host_scope = || match (&host, self.scopes.get(permission)) {
+            (Some(host), Some(scope)) if !scope.hosts.is_empty() => scope
+                .hosts
+                .iter()
+                .any(|pattern| super::scope::host_matches(pattern, host)),
+            _ => true,
+        };
+        let allowed = self.has_permission(permission) && (self.trusted || in_host_scope());
+        if self.trusted {
+            return Ok(());
         }
+        let requests = &self.loader.requests;
+        let allowed =
+            allowed || requests.allowed_once(&self.module_name, permission, host.as_deref());
+        self.loader
+            .usage
+            .record(&self.module_name, permission, allowed);
         if allowed {
-            Ok(())
-        } else {
-            Err(mlua::Error::runtime(format!(
-                "module '{}' needs permission '{}'",
-                self.module_name, permission
-            )))
+            return Ok(());
+        }
+        let refusal = |detail: String| {
+            let target = host
+                .as_deref()
+                .map(|host| format!(" for {host}"))
+                .unwrap_or_default();
+            mlua::Error::runtime(format!(
+                "module '{}' needs permission '{permission}'{target}{detail}",
+                self.module_name
+            ))
+        };
+        let denied = super::requests::denied_set(&self.db.get(super::requests::DENIED_KEY).await);
+        if denied.contains(&super::requests::denied_entry(
+            &self.module_name,
+            permission,
+        )) {
+            return Err(refusal(", which the owner refused".to_string()));
+        }
+        let subject = super::requests::Subject {
+            module: self.module_name.clone(),
+            permission: permission.to_string(),
+            host: host.clone(),
+            chat: self.chat_id,
+            account: self.session_file.clone(),
+        };
+        let (id, mut answer) = match requests.open(subject.clone()) {
+            super::requests::Opened::New(id, answer) => {
+                self.loader.post_request(id, &subject).await;
+                (id, answer)
+            }
+            super::requests::Opened::Existing(id, answer) => (id, answer),
+        };
+        let prefix = self.prefix().await;
+        let waiting =
+            format!(". Request #{id} waits in the panel inbox, or send {prefix}grant {id}");
+        if !self.interactive {
+            return Err(refusal(waiting));
+        }
+        let _ = edit_current_message(
+            self,
+            &format!(
+                "{} `{}` asks for `{permission}`{}. Answer in the panel inbox or with `{prefix}grant {id}`.",
+                crate::premium::icon("wait"),
+                self.module_name,
+                host.as_deref().map(|h| format!(" ({h})")).unwrap_or_default()
+            ),
+        )
+        .await;
+        let decision = tokio::time::timeout(super::requests::WAIT, async {
+            loop {
+                let current = *answer.borrow_and_update();
+                if current != super::requests::Decision::Pending {
+                    return current;
+                }
+                if answer.changed().await.is_err() {
+                    return super::requests::Decision::Denied;
+                }
+            }
+        })
+        .await;
+        match decision {
+            Ok(super::requests::Decision::Allowed) => Ok(()),
+            Ok(_) => Err(refusal(", which the owner refused".to_string())),
+            Err(_) => Err(refusal(waiting)),
         }
     }
 
@@ -173,14 +266,21 @@ impl Ctx {
         }
         match self.scopes.get("network") {
             Some(scope) if !scope.hosts.is_empty() => {
-                http::Reach::Hosts(scope.hosts.clone().into())
+                match self.loader.requests.once_hosts(&self.module_name) {
+                    None => http::Reach::Public,
+                    Some(extra) => {
+                        let mut hosts = scope.hosts.clone();
+                        hosts.extend(extra);
+                        http::Reach::Hosts(hosts.into())
+                    }
+                }
             }
             _ => http::Reach::Public,
         }
     }
 
-    fn require_admin(&self) -> mlua::Result<()> {
-        self.require_permission("core.admin")
+    async fn require_admin(&self) -> mlua::Result<()> {
+        self.require_permission("core.admin").await
     }
 
     /// Database key behind a module key: unchanged for trusted modules, inside the module
@@ -455,7 +555,7 @@ impl UserData for Ctx {
 
         methods.add_async_method("pin", |_, ctx, ()| async move {
             ctx.throttle(Action::Message)?;
-            ctx.require_permission("telegram.history")?;
+            ctx.require_permission("telegram.history").await?;
             let msg = ctx
                 .current_message()
                 .await
@@ -471,7 +571,7 @@ impl UserData for Ctx {
 
         methods.add_async_method("unpin", |_, ctx, ()| async move {
             ctx.throttle(Action::Message)?;
-            ctx.require_permission("telegram.history")?;
+            ctx.require_permission("telegram.history").await?;
             let msg = ctx
                 .current_message()
                 .await
@@ -486,7 +586,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("purge", |_, ctx, ()| async move {
-            ctx.require_permission("telegram.history")?;
+            ctx.require_permission("telegram.history").await?;
             purge_from_reply(ctx.clone()).await.map_err(rt)
         });
 
@@ -494,7 +594,7 @@ impl UserData for Ctx {
             "tag_all",
             |_, ctx, (text, limit): (Option<String>, Option<usize>)| async move {
                 ctx.throttle(Action::Message)?;
-                ctx.require_permission("telegram.history")?;
+                ctx.require_permission("telegram.history").await?;
                 tag_all(ctx.clone(), text.unwrap_or_default(), limit.unwrap_or(100))
                     .await
                     .map_err(rt)
@@ -511,6 +611,17 @@ impl UserData for Ctx {
             let reaction = tl::enums::Reaction::Emoji(tl::types::ReactionEmoji { emoticon: emoji });
             msg.react(vec![reaction]).await.map_err(rt)
         });
+
+        methods.add_async_method(
+            "perm_decide",
+            |_, ctx, (id, choice): (u64, String)| async move {
+                ctx.require_admin().await?;
+                ctx.loader
+                    .decide_request(id, choice.trim())
+                    .await
+                    .map_err(rt)
+            },
+        );
 
         methods.add_async_method("db_get", |lua, ctx, key: String| async move {
             let value = ctx.db.get(&ctx.storage_key(&key)).await;
@@ -599,7 +710,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_module",
             |_, ctx, (source, name): (String, Option<String>)| async move {
-                ctx.require_permission("modules.install")?;
+                ctx.require_permission("modules.install").await?;
                 installer::install_module(&ctx, source, name).await
             },
         );
@@ -607,7 +718,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_replied_module",
             |_, ctx, name: Option<String>| async move {
-                ctx.require_permission("modules.install")?;
+                ctx.require_permission("modules.install").await?;
                 installer::install_replied_module(ctx.clone(), name)
                     .await
                     .map_err(rt)
@@ -617,7 +728,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_plugin",
             |_, ctx, (source, name): (String, Option<String>)| async move {
-                ctx.require_permission("modules.install")?;
+                ctx.require_permission("modules.install").await?;
                 installer::install_module(&ctx, source, name).await
             },
         );
@@ -625,7 +736,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "install_replied_plugin",
             |_, ctx, name: Option<String>| async move {
-                ctx.require_permission("modules.install")?;
+                ctx.require_permission("modules.install").await?;
                 installer::install_replied_module(ctx.clone(), name)
                     .await
                     .map_err(rt)
@@ -642,7 +753,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("premium_status", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let mut status = crate::premium::status(&ctx.db).await;
             if let Some(id) = ctx.own_user_id {
                 status["account_premium"] =
@@ -654,7 +765,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "premium_set",
             |_, ctx, (what, value, extra): (String, Option<String>, Option<String>)| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let value = value.unwrap_or_default();
                 let result = match what.as_str() {
                     "mode" => crate::premium::set_mode(&ctx.db, &value).await.map(|_| 0),
@@ -674,7 +785,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("modules_list", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let summaries = ctx.loader.summaries().await;
             let list = summaries
                 .iter()
@@ -698,25 +809,25 @@ impl UserData for Ctx {
         methods.add_async_method(
             "module_set_enabled",
             |_, ctx, (name, enabled): (String, bool)| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 ctx.loader.set_enabled(&name, enabled).await.map_err(rt)
             },
         );
 
         methods.add_async_method("module_reload", |_, ctx, name: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             ctx.loader.reload(&name).await.map_err(rt)
         });
 
         methods.add_async_method("module_remove", |_, ctx, name: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             ctx.loader.remove(&name).await.map_err(rt)
         });
 
         methods.add_async_method(
             "module_restore",
             |lua, ctx, name: Option<String>| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let restored =
                     crate::bundled::restore(&ctx.modules_dir, name.as_deref()).map_err(rt)?;
                 super::to_lua(&lua, &restored)
@@ -724,7 +835,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("module_config", |lua, ctx, name: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let summary = ctx
                 .loader
                 .summaries()
@@ -760,7 +871,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "module_config_set",
             |_, ctx, (name, key, value): (String, String, Option<String>)| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let raw = value
                     .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null);
@@ -786,7 +897,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("set_prefixes", |lua, ctx, values: Vec<String>| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let stored = crate::core_settings::set_prefixes(&ctx.db, &values)
                 .await
                 .map_err(rt)?;
@@ -794,7 +905,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("set_lang", |_, ctx, code: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let lang = crate::i18n::Lang::parse(&code);
             crate::core_settings::set_language(&ctx.db, lang)
                 .await
@@ -803,30 +914,30 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("sudo_list", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             super::to_lua(&lua, &crate::core_settings::sudo_users(&ctx.db).await)
         });
 
         methods.add_async_method("sudo_set", |_, ctx, users: Vec<i64>| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             crate::core_settings::set_sudo_users(&ctx.db, &users)
                 .await
                 .map_err(rt)
         });
 
         methods.add_async_method("panel_link", |_, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             Ok(ctx.loader.services.panel_link().await)
         });
 
         methods.add_async_method("restart", |_, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             request_restart(&ctx).await.map_err(rt)?;
             Ok(())
         });
 
         methods.add_async_method("check_update", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let source = crate::updater::is_source_checkout();
             let info = if source {
                 serde_json::json!({ "current": crate::VERSION, "source_checkout": true })
@@ -846,7 +957,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("self_update", |_, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let release = crate::updater::latest_release().await.map_err(rt)?;
             if !crate::updater::is_newer(&release.version, crate::VERSION) {
                 return Ok(false);
@@ -857,7 +968,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("account", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let handle = ctx.account_handle().await.map_err(rt)?;
             super::to_lua(
                 &lua,
@@ -870,7 +981,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("account_counts", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let handle = ctx.account_handle().await.map_err(rt)?;
             let counts = crate::account_tools::counts(&handle).await.map_err(rt)?;
             super::to_lua(&lua, &counts)
@@ -879,7 +990,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "cleanup_preview",
             |lua, ctx, options: mlua::Value| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let options: crate::account_tools::CleanupOptions = lua.from_value(options)?;
                 if options.is_empty() {
                     return Err(rt(
@@ -921,7 +1032,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("cleanup_run", |_, ctx, code: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let services = Arc::clone(&ctx.loader.services);
             let (user_id, options, plan) = services
                 .accounts
@@ -948,7 +1059,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "account_bulk",
             |_, ctx, (action, days): (String, Option<u32>)| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let action = crate::account_tools::BulkAction::parse(&action).ok_or_else(|| {
                     rt("unknown action; use read_all, archive_inactive, mute_all, export")
                 })?;
@@ -968,7 +1079,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("persona_kinds", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let lang = ctx.lang().await;
             let list = crate::persona::Kind::ALL
                 .iter()
@@ -984,14 +1095,14 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("persona_check", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let handle = ctx.account_handle().await.map_err(rt)?;
             let check = crate::persona::check(&handle, &ctx.db).await.map_err(rt)?;
             super::to_lua(&lua, &check)
         });
 
         methods.add_async_method("persona_apply", |lua, ctx, kind: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let kind = crate::persona::Kind::parse(&kind).ok_or_else(|| {
                 rt("unknown persona; use anime, tiktok, osint, anon, music, art or random")
             })?;
@@ -1008,7 +1119,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("persona_restore", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let handle = ctx.account_handle().await.map_err(rt)?;
             let report = crate::persona::restore(&handle, &ctx.db)
                 .await
@@ -1022,7 +1133,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("persona_status", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let handle = ctx.account_handle().await.map_err(rt)?;
             match crate::persona::status(&ctx.db, handle.user_id).await {
                 Some(status) => super::to_lua(&lua, &status),
@@ -1031,7 +1142,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("jobs", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let mut jobs = ctx.loader.services.jobs.list().await;
             jobs.truncate(10);
             for job in &mut jobs {
@@ -1042,14 +1153,14 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("job_cancel", |_, ctx, id: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             Ok(ctx.loader.services.jobs.cancel(id.trim()).await)
         });
 
         methods.add_async_method(
             "profile_update",
             |lua, ctx, update: mlua::Value| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 let update: crate::account_tools::ProfileUpdate = lua.from_value(update)?;
                 let handle = ctx.account_handle().await.map_err(rt)?;
                 crate::account_tools::update_profile(&handle, &update)
@@ -1059,13 +1170,13 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("auto_rules", |lua, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let rules = crate::automations::load_rules(&ctx.loader.services).await;
             super::to_lua(&lua, &rules)
         });
 
         methods.add_async_method("auto_save", |lua, ctx, rule: mlua::Value| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             let mut rule: crate::automations::Rule = lua.from_value(rule)?;
             if rule.accounts.is_empty() {
                 if let Ok(handle) = ctx.account_handle().await {
@@ -1081,7 +1192,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "auto_toggle",
             |_, ctx, (id, enabled): (String, bool)| async move {
-                ctx.require_admin()?;
+                ctx.require_admin().await?;
                 crate::automations::set_enabled(&ctx.loader.services, &id, enabled)
                     .await
                     .map_err(rt)
@@ -1089,7 +1200,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("auto_delete", |_, ctx, id: String| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             crate::automations::delete_rule(&ctx.loader.services, &id)
                 .await
                 .map_err(rt)
@@ -1160,7 +1271,7 @@ impl UserData for Ctx {
 
         methods.add_async_method("http_get", |_, ctx, url: String| async move {
             ctx.throttle(Action::Network)?;
-            ctx.require_permission("network")?;
+            ctx.require_network(&url).await?;
             http::text(ctx.reach(), "GET", &url, None, Vec::new())
                 .await
                 .map_err(rt)
@@ -1168,7 +1279,7 @@ impl UserData for Ctx {
 
         methods.add_async_method("http_json_get", |lua, ctx, url: String| async move {
             ctx.throttle(Action::Network)?;
-            ctx.require_permission("network")?;
+            ctx.require_network(&url).await?;
             let value = http::json(ctx.reach(), "GET", &url, None, Vec::new())
                 .await
                 .map_err(rt)?;
@@ -1186,7 +1297,7 @@ impl UserData for Ctx {
                 Option<mlua::Table>,
             )| async move {
                 ctx.throttle(Action::Network)?;
-                ctx.require_permission("network")?;
+                ctx.require_network(&url).await?;
                 let headers = header_pairs(headers)?;
                 http::text(ctx.reach(), &method, &url, body, headers)
                     .await
@@ -1205,7 +1316,7 @@ impl UserData for Ctx {
                 Option<mlua::Table>,
             )| async move {
                 ctx.throttle(Action::Network)?;
-                ctx.require_permission("network")?;
+                ctx.require_network(&url).await?;
                 let headers = header_pairs(headers)?;
                 let value = http::json(ctx.reach(), &method, &url, body, headers)
                     .await
@@ -1227,8 +1338,8 @@ impl UserData for Ctx {
                 Option<mlua::Table>,
             )| async move {
                 ctx.throttle(Action::Network)?;
-                ctx.require_permission("network")?;
-                ctx.require_permission("telegram.media")?;
+                ctx.require_network(&url).await?;
+                ctx.require_permission("telegram.media").await?;
                 ctx.check_file(&path)?;
                 let fields = field_pairs(fields)?;
                 let headers = header_pairs(headers)?;
@@ -1252,7 +1363,7 @@ impl UserData for Ctx {
             "fetch",
             |lua, ctx, (url, opts): (String, Option<mlua::Table>)| async move {
                 ctx.throttle(Action::Network)?;
-                ctx.require_permission("network")?;
+                ctx.require_network(&url).await?;
                 let mut request = fetch_request(&lua, url, opts)?;
                 request.reach = ctx.reach();
                 let result = lua.create_table()?;
@@ -1282,8 +1393,8 @@ impl UserData for Ctx {
             },
         );
 
-        methods.add_method("env_get", |_, ctx, key: String| {
-            ctx.require_permission("secrets")?;
+        methods.add_async_method("env_get", |_, ctx, key: String| async move {
+            ctx.require_permission("secrets").await?;
             if !ctx.trusted && CORE_SECRETS.contains(&key.as_str()) {
                 return Err(mlua::Error::runtime(format!(
                     "module '{}' may not read {key}",
@@ -1296,7 +1407,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "download_replied_media",
             |_, ctx, name: Option<String>| async move {
-                ctx.require_permission("telegram.media")?;
+                ctx.require_permission("telegram.media").await?;
                 download_replied_media(ctx.clone(), name).await.map_err(rt)
             },
         );
@@ -1305,8 +1416,8 @@ impl UserData for Ctx {
             "download_url",
             |_, ctx, (url, name): (String, Option<String>)| async move {
                 ctx.throttle(Action::Network)?;
-                ctx.require_permission("network")?;
-                ctx.require_permission("telegram.media")?;
+                ctx.require_network(&url).await?;
+                ctx.require_permission("telegram.media").await?;
                 download_url_to_file(ctx.reach(), &url, name.as_deref())
                     .await
                     .map_err(rt)
@@ -1317,7 +1428,7 @@ impl UserData for Ctx {
             "send_file",
             |_, ctx, (path, caption): (String, Option<String>)| async move {
                 ctx.throttle(Action::Message)?;
-                ctx.require_permission("telegram.media")?;
+                ctx.require_permission("telegram.media").await?;
                 ctx.check_file(&path)?;
                 send_file(ctx.clone(), path, caption.unwrap_or_default())
                     .await
@@ -1326,42 +1437,42 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("run_term", |_, ctx, command: String| async move {
-            ctx.require_permission("shell")?;
+            ctx.require_permission("shell").await?;
             run_shell_command(ctx.clone(), command).await.map_err(rt)
         });
 
         methods.add_async_method(
             "run_process",
             |_, ctx, (program, args): (String, Vec<String>)| async move {
-                ctx.require_permission("shell")?;
+                ctx.require_permission("shell").await?;
                 run_process(ctx.clone(), program, args).await.map_err(rt)
             },
         );
 
         methods.add_async_method("update_project", |_, ctx, ()| async move {
-            ctx.require_permission("shell")?;
+            ctx.require_permission("shell").await?;
             update_project(ctx.clone()).await.map_err(rt)
         });
 
         methods.add_async_method("backup", |_, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             crate::backup::send_backup(&ctx).await.map_err(rt)
         });
 
         methods.add_async_method("restore_backup", |_, ctx, ()| async move {
-            ctx.require_admin()?;
+            ctx.require_admin().await?;
             crate::backup::restore_from_reply(&ctx).await.map_err(rt)
         });
 
         methods.add_async_method("delete_last_own", |_, ctx, count: u32| async move {
-            ctx.require_permission("telegram.history")?;
+            ctx.require_permission("telegram.history").await?;
             delete_last_own_messages(ctx.clone(), count)
                 .await
                 .map_err(rt)
         });
 
         methods.add_async_method("message_info", |_, ctx, ()| async move {
-            ctx.require_permission("telegram.history")?;
+            ctx.require_permission("telegram.history").await?;
             build_message_info(ctx.clone()).await.map_err(rt)
         });
 

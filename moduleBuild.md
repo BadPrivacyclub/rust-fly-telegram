@@ -497,6 +497,13 @@ applies everywhere:
   one, is outside a scope that names chats.
 - `accounts` (session files): the permission works only on these accounts.
 
+When a sandboxed module calls something it may not use, the owner is asked in the panel
+inbox: allow for 10 minutes, allow within the scope of the call (this chat, this host, or
+this account), allow everywhere, or refuse for good. A command waits up to 60 seconds for
+the answer; `on_message` and other background calls fail at once and leave the request in
+the inbox. `.grant <id> [once|scope|always|deny]` answers from Telegram. `shell`,
+`secrets`, `modules.install`, and `core.admin` are never granted for good from a request.
+
 ---
 
 ## Manifests and signing
