@@ -652,6 +652,8 @@ impl Loader {
         let prefixes = core_settings::prefixes(&self.services.db).await;
         let is_command = core_settings::parse_command(msg.text(), &prefixes).is_some();
         let own_id = account.own_user_id.get().copied();
+        // Each listener runs in its own task, so a module waiting on the network does not hold
+        // up the others. Every listener gets its own event table, which it may change freely.
         for (handler, manifest) in listeners {
             let ctx = Ctx::new(Arc::clone(self), &account, &manifest).with_message(msg.clone());
             let event = match context::message_table(&self.lua, &msg, own_id, is_command) {
@@ -661,15 +663,18 @@ impl Loader {
                     return;
                 }
             };
-            let call = handler.call_async::<()>((ctx, event));
-            if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
-                self.services.runtime.record_error();
-                warn!(
-                    "module '{}' on_message: {}",
-                    manifest.name,
-                    clean_lua_error(&e)
-                );
-            }
+            let runtime = Arc::clone(&self.services.runtime);
+            tokio::spawn(async move {
+                let call = handler.call_async::<()>((ctx, event));
+                if let Err(e) = budget::limited(budget::limit_for(manifest.trusted), call).await {
+                    runtime.record_error();
+                    warn!(
+                        "module '{}' on_message: {}",
+                        manifest.name,
+                        clean_lua_error(&e)
+                    );
+                }
+            });
         }
     }
 }

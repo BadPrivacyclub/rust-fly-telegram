@@ -89,6 +89,8 @@
 
 ### Changes
 
+- Modules that watch incoming messages run side by side, so one waiting on the network no
+  longer delays the others.
 - Database writes go one at a time and a burst of changes shares one write, so an older
   copy can no longer overwrite a newer one on disk. With a master password the key is
   derived once instead of on every change, which made each change take a noticeable time.
