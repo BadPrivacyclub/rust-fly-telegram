@@ -154,6 +154,9 @@ type definitions, and backups can go to Telegram encrypted.
 
 ### Changes
 
+- Release builds for macOS run on `macos-latest` (Apple Silicon, with the Intel build
+  cross-compiled), since `macos-14` runners are gone. The README describes installing
+  from a release step by step, with checksums.
 - Two backups made within the same second no longer overwrite each other.
 - Modules that watch incoming messages run side by side, so one waiting on the network no
   longer delays the others.

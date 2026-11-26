@@ -30,10 +30,12 @@ jobs:
             os: ubuntu-22.04-arm
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+          # The macos-14 image no longer gets runners. macos-latest is Apple Silicon and
+          # cross-compiles the Intel build.
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:

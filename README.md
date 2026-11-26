@@ -45,6 +45,58 @@ panel. One executable, no runtime dependencies.
 
 ### 1. Install
 
+Pick one of three ways. All of them keep your data in a folder of your choice.
+
+#### From a release (recommended)
+
+Every [release](https://github.com/BadPrivacyclub/rust-fly-telegram/releases/latest) has
+ready builds, one archive per system, and `sha256sums.txt` to check them:
+
+| System | Archive |
+|---|---|
+| Windows x64 | `fly-telegram-x86_64-pc-windows-msvc.zip` |
+| Linux x64 | `fly-telegram-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `fly-telegram-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS, Apple Silicon | `fly-telegram-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `fly-telegram-x86_64-apple-darwin.tar.gz` |
+
+Each archive holds `fly-telegram`, `music-worker`, `README.md`, `LICENSE`, and
+`START-HERE.txt`. The bare `fly-telegram` binary is attached next to the archive too.
+
+**Linux / macOS**
+
+```bash
+target=x86_64-unknown-linux-gnu      # pick yours from the table
+base=https://github.com/BadPrivacyclub/rust-fly-telegram/releases/latest/download
+curl -fLO "$base/fly-telegram-$target.tar.gz"
+curl -fLO "$base/sha256sums.txt"
+grep " fly-telegram-$target.tar.gz$" sha256sums.txt | sha256sum -c -   # macOS: shasum -a 256 -c -
+tar -xzf "fly-telegram-$target.tar.gz"
+cd "fly-telegram-$target" && ./fly-telegram
+```
+
+On macOS the binaries are not notarized, so remove the quarantine flag once:
+`xattr -d com.apple.quarantine fly-telegram music-worker`.
+
+**Windows** (PowerShell)
+
+```powershell
+$base = "https://github.com/BadPrivacyclub/rust-fly-telegram/releases/latest/download"
+Invoke-WebRequest "$base/fly-telegram-x86_64-pc-windows-msvc.zip" -OutFile fly-telegram.zip
+Invoke-WebRequest "$base/sha256sums.txt" -OutFile sha256sums.txt
+(Get-FileHash fly-telegram.zip -Algorithm SHA256).Hash   # compare with sha256sums.txt
+Expand-Archive fly-telegram.zip -DestinationPath fly-telegram
+.\fly-telegram\fly-telegram.exe
+```
+
+Or download the archive in the browser, unpack it anywhere, and double-click
+`fly-telegram.exe`. Windows SmartScreen may ask once; choose **More info, Run anyway**.
+
+#### With the installer
+
+The installer does the same for you: it downloads the release for your platform, checks
+it against `sha256sums.txt`, and builds from source when no release fits.
+
 **Linux / macOS**
 
 ```bash
@@ -57,14 +109,15 @@ curl -fsSL https://raw.githubusercontent.com/BadPrivacyclub/rust-fly-telegram/ma
 irm https://raw.githubusercontent.com/BadPrivacyclub/rust-fly-telegram/main/install.ps1 | iex
 ```
 
-**Or just download** the archive for your system from
-[Releases](https://github.com/BadPrivacyclub/rust-fly-telegram/releases), unpack it anywhere
-and run `fly-telegram` (double-click `fly-telegram.exe` on Windows). Data is kept in the same
-folder, and the setup wizard opens in your browser.
+Add `--service` (Linux/macOS) or `-Service` (Windows) to start fly-telegram in the
+background right away.
 
-The installers download the release for your platform and verify its checksum. If no
-release exists for your platform, they build from source. Add `--service` (Linux/macOS)
-or `-Service` (Windows) to start fly-telegram in the background right away.
+#### From source
+
+See [Building from source](#building-from-source). It needs Rust and a C compiler.
+
+Updating works the same for all three: `.update` in Telegram, or Settings, Network and
+updates in the panel.
 
 ### 2. Run and open the wizard
 
@@ -421,6 +474,13 @@ git clone https://github.com/BadPrivacyclub/rust-fly-telegram.git
 cd rust-fly-telegram
 cargo build --release        # or ./compile.sh / compile.bat
 ./target/release/fly-telegram
+```
+
+For a build tuned to the processor of this computer (it may not start on other ones):
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --profile dist
+./target/dist/fly-telegram
 ```
 
 Run the checks that CI runs:
