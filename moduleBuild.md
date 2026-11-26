@@ -9,6 +9,7 @@ directory. They load at startup and **reload automatically** when you save the f
 - [Help: `M.help`](#help-mhelp)
 - [Settings: `M.config`](#settings-mconfig)
 - [Events: `M.on_message`](#events-mon_message)
+- [More events and schedules](#more-events-and-schedules)
 - [The `ctx` API](#the-ctx-api)
 - [The `ui` library](#the-ui-library)
 - [The `json` library](#the-json-library)
@@ -117,6 +118,8 @@ A module returns a table:
 | `M.help` | recommended | Category, description, and per-command usage for `.help` and the panel |
 | `M.config` | optional | Settings schema: validated, and editable with `.cfg` and in the panel |
 | `M.on_message` | optional | Called for every new message (see [events](#events-mon_message)) |
+| `M.on_edit`, `M.on_delete`, `M.on_join`, `M.on_leave`, `M.on_reaction`, `M.on_load`, `M.on_unload` | optional | Other events (see [more events](#more-events-and-schedules)) |
+| `M.every`, `M.at` | optional | Scheduled handlers |
 | `M.meta` | optional | Informational (`name`, `version`); the manifest is authoritative |
 
 Handlers receive `ctx` and `args`. `args` is everything after the command, trimmed:
@@ -228,6 +231,34 @@ Fields of `msg` (the same table `ctx:message()` returns):
 
 Sandboxed modules receive events only with the `telegram.read` permission.
 
+### More events and schedules
+
+| Handler | Called with | When |
+|---|---|---|
+| `M.on_edit(ctx, msg)` | the message table | A message was edited |
+| `M.on_delete(ctx, ev)` | `{ chat_id, ids, messages }` | Messages were deleted. `chat_id` is known for channels and supergroups only. `messages` (id, chat_id, sender_id, text) holds what anti-delete kept, and only with `telegram.deleted` |
+| `M.on_join(ctx, ev)`, `M.on_leave(ctx, ev)` | `{ chat_id, user_ids, by_link }` | Members joined or left a group |
+| `M.on_reaction(ctx, ev)` | `{ chat_id, message_id, reactions = { { emoji, count } } }` | Reactions on a message changed |
+| `M.on_load()`, `M.on_unload()` | nothing | The module was loaded, or is being unloaded or replaced |
+
+Every event needs `telegram.read` in a sandboxed module and follows its chat and account
+scopes. Each handler runs in its own task with the usual time limit.
+
+Scheduled handlers run once per connected account, with a `ctx` that has no message:
+
+```lua
+M.every = { ["10m"] = "tick", ["2h"] = "sync" }   -- s, m, h, d; at least 1m
+M.at = { ["09:00"] = "morning" }                    -- local time, once a day
+
+function M.morning(ctx)
+    ctx:send("me", "Good morning")
+end
+```
+
+`every` waits one full interval after the start before its first run. A run of `at` missed
+while the userbot was off is not made up. A scheduled call is outside any chat, so a
+permission scoped to chats does not cover it.
+
 ---
 
 ## The `ctx` API
@@ -249,6 +280,7 @@ marked with a permission fail with a clear error if the module doesn't have it.
 | `ctx:message_text()`, `ctx:replied_text()` | Text only |
 | `ctx:schedule(seconds, text, target)` | Telegram-scheduled message. `target` is `"here"` (default) or `"me"` (Saved Messages), with a delay from 10 s to 365 days |
 | `ctx:send_saved(text)` | Send to Saved Messages |
+| `ctx:send(chat, text)` | Send to `"me"`, `"@username"`, or a chat id. Other chats than `me` need `telegram.send`, and its chat scope applies to the target |
 | `ctx:pin()`, `ctx:unpin()` | Pin or unpin the replied message (`telegram.history`) |
 | `ctx:purge()` | Delete from the replied message to the current one; returns the count (`telegram.history`) |
 | `ctx:tag_all(text, limit)` | Mention group members, five per message (`telegram.history`) |
@@ -464,9 +496,11 @@ Every other module runs **sandboxed**:
 | Permission | Grants |
 |---|---|
 | `network` | HTTP requests |
-| `telegram.read` | `on_message` events |
+| `telegram.read` | `on_message`, `on_edit`, `on_delete`, `on_join`, `on_leave`, `on_reaction` |
 | `telegram.history` | Reading and deleting history, pins, mentions |
 | `telegram.media` | Downloading and uploading files |
+| `telegram.send` | `ctx:send` to chats other than Saved Messages |
+| `telegram.deleted` | The text of deleted messages in `on_delete` |
 | `secrets` | Environment variables |
 | `shell` | Running programs ⚠️ |
 | `modules.install` | Installing other modules ⚠️ |

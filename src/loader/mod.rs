@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 
 pub mod budget;
 pub mod context;
+pub mod events;
 pub mod http;
 pub mod installer;
 pub mod manifest;
@@ -21,6 +22,7 @@ pub mod meta;
 pub mod metrics;
 pub mod quota;
 pub mod requests;
+pub mod schedule;
 pub mod scope;
 
 use ed25519_dalek::VerifyingKey;
@@ -50,7 +52,8 @@ struct Module {
     file_name: String,
     help: ModuleHelp,
     config: Vec<ConfigField>,
-    has_on_message: bool,
+    has_events: bool,
+    schedules: Vec<schedule::Schedule>,
 }
 
 /// I pass this to a handler: the account that received the message.
@@ -279,13 +282,16 @@ impl Loader {
         command_names.sort();
         let help = meta::parse_help(&lua, &table, &command_names);
         let config = meta::parse_config(&lua, &table);
-        let has_on_message = table.get::<Function>("on_message").is_ok();
-        if has_on_message
+        let schedules = schedule::read(&name, &table);
+        let has_events = events::HANDLERS
+            .iter()
+            .any(|handler| table.get::<Function>(*handler).is_ok());
+        if has_events
             && !manifest.trusted
             && !manifest.permissions.iter().any(|p| p == READ_PERMISSION)
         {
             warn!(
-                "module '{name}' defines on_message but lacks the '{READ_PERMISSION}' permission; events are not delivered"
+                "module '{name}' handles events but lacks the '{READ_PERMISSION}' permission; events are not delivered"
             );
         }
 
@@ -295,31 +301,35 @@ impl Loader {
             if manifest.trusted { "" } else { " (sandboxed)" }
         );
 
-        self.modules.write().await.insert(
-            name,
-            Module {
-                lua,
-                ui,
-                table,
-                commands,
-                manifest,
-                source,
-                file_name,
-                help,
-                config,
-                has_on_message,
-            },
-        );
+        let module = Module {
+            lua,
+            ui,
+            table,
+            commands,
+            manifest,
+            source,
+            file_name,
+            help,
+            config,
+            has_events,
+            schedules,
+        };
+        call_hook(&module, "on_load");
+        let replaced = self.modules.write().await.insert(name, module);
+        if let Some(old) = replaced {
+            call_hook(&old, "on_unload");
+        }
 
         Ok(())
     }
 
     pub async fn unload(&self, name: &str) -> bool {
-        let removed = self.modules.write().await.remove(name).is_some();
-        if removed {
+        let removed = self.modules.write().await.remove(name);
+        if let Some(module) = &removed {
+            call_hook(module, "on_unload");
             info!("unloaded module '{name}'");
         }
-        removed
+        removed.is_some()
     }
 
     pub async fn reload(&self, name: &str) -> Result<()> {
@@ -406,7 +416,7 @@ impl Loader {
                 category: module.help.category.clone(),
                 help: module.help.clone(),
                 config,
-                events: module.has_on_message,
+                events: module.has_events,
                 usage: self.usage.for_module(name),
                 metrics: self.metrics.snapshot(
                     name,
@@ -712,9 +722,29 @@ impl Loader {
         Ok(())
     }
 
+    /// Enabled modules with schedules, with what the scheduler needs to call them.
+    pub(crate) async fn scheduled_modules(
+        &self,
+        disabled: &[String],
+    ) -> Vec<(ModuleManifest, Table, Vec<schedule::Schedule>)> {
+        self.modules
+            .read()
+            .await
+            .iter()
+            .filter(|(name, module)| !module.schedules.is_empty() && !disabled.contains(name))
+            .map(|(_, module)| {
+                (
+                    module.manifest.clone(),
+                    module.table.clone(),
+                    module.schedules.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Records a finished call, and switches the module off when it keeps running into the
     /// execution budget or the memory limit.
-    async fn after_call(
+    pub(crate) async fn after_call(
         &self,
         name: &str,
         cpu: std::time::Duration,
@@ -958,55 +988,88 @@ impl Loader {
         Ok(())
     }
 
-    /// I deliver a message to every enabled module that defines `on_message`.
+    /// Delivers a message to every enabled module that defines `on_message`.
     pub async fn dispatch_message_event(self: &Arc<Self>, account: Account, msg: Message) {
+        let prefixes = core_settings::prefixes(&self.services.db).await;
+        let is_command = core_settings::parse_command(msg.text(), &prefixes).is_some();
+        let own_id = account.own_user_id.get().copied();
+        let chat = Some(msg.peer_id().bot_api_dialog_id());
+        let event_msg = msg.clone();
+        self.dispatch_event(
+            account,
+            "on_message",
+            chat,
+            Some(msg),
+            Arc::new(move |lua, _| {
+                context::message_table(lua, &event_msg, own_id, is_command).map(mlua::Value::Table)
+            }),
+        )
+        .await;
+    }
+
+    /// Calls `handler` of every enabled module that defines it and may read this chat on this
+    /// account. `build` makes the event table in the state of each module; its second argument
+    /// tells whether the module holds a permission, for parts of an event behind one.
+    pub(crate) async fn dispatch_event(
+        self: &Arc<Self>,
+        account: Account,
+        handler: &'static str,
+        chat: Option<i64>,
+        message: Option<Message>,
+        build: Arc<EventBuilder>,
+    ) {
         let disabled = core_settings::disabled_modules(&self.services.db).await;
         let listeners = {
             let modules = self.modules.read().await;
             modules
                 .iter()
                 .filter(|(name, module)| {
-                    module.has_on_message
-                        && !disabled.contains(name)
+                    !disabled.contains(name)
                         && scope::allows(
                             module.manifest.trusted,
                             &module.manifest.permissions,
                             &module.manifest.scopes,
                             READ_PERMISSION,
                             &account.session_file,
-                            Some(msg.peer_id().bot_api_dialog_id()),
+                            chat,
                         )
                 })
                 .filter_map(|(_, module)| {
                     module
                         .table
-                        .get::<Function>("on_message")
+                        .get::<Function>(handler)
                         .ok()
-                        .map(|handler| (handler, module.manifest.clone(), module.lua.clone()))
+                        .map(|function| (function, module.manifest.clone(), module.lua.clone()))
                 })
                 .collect::<Vec<_>>()
         };
-        if listeners.is_empty() {
-            return;
-        }
-
-        let prefixes = core_settings::prefixes(&self.services.db).await;
-        let is_command = core_settings::parse_command(msg.text(), &prefixes).is_some();
-        let own_id = account.own_user_id.get().copied();
         // Each listener runs in its own task, so a module waiting on the network does not hold
         // up the others. Every listener gets its own event table, which it may change freely.
-        for (handler, manifest, lua) in listeners {
-            let ctx = Ctx::new(Arc::clone(self), &account, &manifest).with_message(msg.clone());
-            let event = match context::message_table(&lua, &msg, own_id, is_command) {
+        for (function, manifest, lua) in listeners {
+            let mut ctx = Ctx::new(Arc::clone(self), &account, &manifest).with_chat(chat);
+            if let Some(msg) = &message {
+                ctx = ctx.with_message(msg.clone());
+            }
+            let may = |permission: &str| {
+                scope::allows(
+                    manifest.trusted,
+                    &manifest.permissions,
+                    &manifest.scopes,
+                    permission,
+                    &account.session_file,
+                    chat,
+                )
+            };
+            let event = match build(&lua, &may) {
                 Ok(event) => event,
                 Err(e) => {
-                    warn!("could not build message event: {e}");
+                    warn!("could not build the {handler} event: {e}");
                     return;
                 }
             };
             let loader = Arc::clone(self);
             tokio::spawn(async move {
-                let call = handler.call_async::<()>((ctx, event));
+                let call = function.call_async::<()>((ctx, event));
                 let started = std::time::Instant::now();
                 let (result, cpu) =
                     budget::measured(budget::limit_for(manifest.trusted), call).await;
@@ -1016,12 +1079,103 @@ impl Loader {
                     .await;
                 if let Some(message) = error {
                     loader.services.runtime.record_error();
-                    warn!("module '{}' on_message: {message}", manifest.name);
+                    warn!("module '{}' {handler}: {message}", manifest.name);
                 }
             });
         }
     }
+
+    pub async fn dispatch_edit(self: &Arc<Self>, account: Account, msg: Message) {
+        let own_id = account.own_user_id.get().copied();
+        let chat = Some(msg.peer_id().bot_api_dialog_id());
+        let event_msg = msg.clone();
+        self.dispatch_event(
+            account,
+            "on_edit",
+            chat,
+            Some(msg),
+            Arc::new(move |lua, _| {
+                context::message_table(lua, &event_msg, own_id, false).map(mlua::Value::Table)
+            }),
+        )
+        .await;
+    }
+
+    pub async fn dispatch_membership(self: &Arc<Self>, account: Account, msg: Message) {
+        let Some(membership) = events::membership(&msg) else {
+            return;
+        };
+        let chat_id = msg.peer_id().bot_api_dialog_id();
+        let handler = if membership.joined {
+            "on_join"
+        } else {
+            "on_leave"
+        };
+        self.dispatch_event(
+            account,
+            handler,
+            Some(chat_id),
+            Some(msg),
+            Arc::new(move |lua, _| {
+                events::membership_table(lua, chat_id, &membership).map(mlua::Value::Table)
+            }),
+        )
+        .await;
+    }
+
+    pub async fn dispatch_reactions(
+        self: &Arc<Self>,
+        account: Account,
+        reactions: events::Reactions,
+    ) {
+        let chat = Some(reactions.chat_id);
+        self.dispatch_event(
+            account,
+            "on_reaction",
+            chat,
+            None,
+            Arc::new(move |lua, _| {
+                events::reactions_table(lua, &reactions).map(mlua::Value::Table)
+            }),
+        )
+        .await;
+    }
+
+    pub async fn dispatch_deletion(self: &Arc<Self>, account: Account, deletion: events::Deletion) {
+        let chat = deletion.chat_id;
+        self.dispatch_event(
+            account,
+            "on_delete",
+            chat,
+            None,
+            Arc::new(move |lua, may| {
+                events::deletion_table(lua, &deletion, may(events::DELETED_PERMISSION))
+                    .map(mlua::Value::Table)
+            }),
+        )
+        .await;
+    }
 }
+
+/// Calls `on_load` or `on_unload` of a module, if it defines one, within the execution budget.
+fn call_hook(module: &Module, hook: &str) {
+    let Ok(function) = module.table.get::<Function>(hook) else {
+        return;
+    };
+    let limit = budget::limit_for(module.manifest.trusted);
+    if let Err(error) = budget::run(limit, || function.call::<()>(())) {
+        warn!(
+            "module '{}' {hook}: {}",
+            module.manifest.name,
+            clean_lua_error(&error)
+        );
+    }
+}
+
+/// Builds an event table in a module's state. The second argument tells whether the module
+/// holds a permission.
+pub(crate) type EventBuilder =
+    dyn Fn(&Lua, &dyn Fn(&str) -> bool) -> mlua::Result<mlua::Value> + Send + Sync;
 
 /// I convert Rust data to Lua with JSON `null` as `nil`, so `value or default` works.
 pub(crate) fn to_lua<T: Serialize + ?Sized>(lua: &Lua, value: &T) -> mlua::Result<mlua::Value> {
@@ -1528,6 +1682,31 @@ mod tests {
             .set_permissions("x", risky, Default::default(), false)
             .await
             .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn load_hooks_run_and_schedules_are_read() {
+        let source = r#"
+            local M = { commands = {}, loaded = 0 }
+            M.every = { ["15m"] = "tick" }
+            M.at = { ["08:30"] = "morning" }
+            function M.on_load() M.loaded = M.loaded + 1 end
+            function M.tick(ctx) end
+            function M.morning(ctx) end
+            function M.on_edit(ctx, msg) end
+            return M
+        "#;
+        let (loader, dir) = loader_with(&[("timer.lua", source)]).await;
+        let modules = loader.modules.read().await;
+        let module = &modules["timer"];
+        assert_eq!(module.table.get::<i64>("loaded").unwrap(), 1);
+        assert_eq!(module.schedules.len(), 2);
+        assert!(module.has_events);
+        drop(modules);
+        let scheduled = loader.scheduled_modules(&[]).await;
+        assert_eq!(scheduled.len(), 1);
+        assert!(loader.scheduled_modules(&["timer".into()]).await.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 

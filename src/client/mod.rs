@@ -260,13 +260,41 @@ async fn run_connection(
                 let services = Arc::clone(&services);
                 let cache = Arc::clone(&deleted_message_cache);
                 let archive = Arc::clone(&archive);
+                let events_loader = Arc::clone(&loader);
+                let events_account = loader_account.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_deleted_messages(services, cache, archive, deletion).await
-                    {
-                        error!("delete handler error: {e}");
+                    let mut event = crate::loader::events::Deletion {
+                        chat_id: deletion.channel_id().map(|id| -1_000_000_000_000 - id),
+                        ids: deletion.messages().to_vec(),
+                        kept: Vec::new(),
+                    };
+                    match handle_deleted_messages(services, cache, archive, deletion).await {
+                        Ok(kept) => {
+                            event.kept = kept
+                                .into_iter()
+                                .map(|message| crate::loader::events::KeptMessage {
+                                    id: message.message_id,
+                                    chat_id: message.chat.id,
+                                    sender_id: message.sender_id,
+                                    text: message.text,
+                                })
+                                .collect();
+                        }
+                        Err(e) => error!("delete handler error: {e}"),
                     }
+                    events_loader.dispatch_deletion(events_account, event).await;
                 });
+            }
+            Update::Raw(raw) => {
+                if let Some(reactions) = crate::loader::events::reactions(&raw.raw) {
+                    let events_loader = Arc::clone(&loader);
+                    let events_account = loader_account.clone();
+                    tokio::spawn(async move {
+                        events_loader
+                            .dispatch_reactions(events_account, reactions)
+                            .await;
+                    });
+                }
             }
             _ => {}
         }
@@ -298,9 +326,21 @@ fn spawn_message_handlers(loader: Arc<Loader>, account: LoaderAccount, msg: Mess
         let events_account = account.clone();
         let events_msg = msg.clone();
         tokio::spawn(async move {
+            if events_msg.action().is_some() {
+                events_loader
+                    .dispatch_membership(events_account.clone(), events_msg.clone())
+                    .await;
+            }
             events_loader
                 .dispatch_message_event(events_account, events_msg)
                 .await;
+        });
+    } else {
+        let edit_loader = Arc::clone(&loader);
+        let edit_account = account.clone();
+        let edit_msg = msg.clone();
+        tokio::spawn(async move {
+            edit_loader.dispatch_edit(edit_account, edit_msg).await;
         });
     }
 
@@ -538,19 +578,20 @@ async fn handle_deleted_messages(
     cache: Arc<Mutex<Vec<CachedDeletedMessage>>>,
     archive: Arc<Archive>,
     deletion: MessageDeletion,
-) -> Result<()> {
+) -> Result<Vec<CachedDeletedMessage>> {
     let db = &services.db;
     if !db_bool(db, "handlers.antidelete.enabled").await {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let deleted = take_deleted_messages(cache, &deletion).await;
     if deleted.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let notify = services.notifier.enabled(Topic::AntiDelete).await;
     let in_channel = archive::enabled(db).await;
+    let mut recorded = Vec::with_capacity(deleted.len());
     for mut message in deleted {
         let deleted_at = unix_timestamp();
         if in_channel {
@@ -565,9 +606,10 @@ async fn handle_deleted_messages(
                 .send(Topic::AntiDelete, &anti_delete::notification_html(&message))
                 .await;
         }
+        recorded.push(message);
     }
 
-    Ok(())
+    Ok(recorded)
 }
 
 /// I keep recent messages so a deletion can be archived. Nothing is cached while anti-delete is

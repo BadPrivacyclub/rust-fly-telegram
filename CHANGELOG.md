@@ -4,6 +4,12 @@
 
 ### New
 
+- **Module events and schedules**: `on_edit`, `on_delete` (with the text anti-delete kept,
+  behind the new `telegram.deleted` permission), `on_join`, `on_leave`, `on_reaction`,
+  `on_load`, and `on_unload`, next to `on_message`; `M.every` and `M.at` run handlers on a
+  schedule; `ctx:send(chat, text)` writes to any chat, behind the new `telegram.send`
+  permission. Reading and sending together count as a risky combination.
+
 - **Module metrics** on the Modules page: calls, CPU time per minute, the 95th percentile of
   the call duration, memory of each sandboxed module, errors, stops, and a sparkline of the
   last hour. A module stopped by the time or memory limit 5 times within 10 minutes is

@@ -103,6 +103,14 @@ impl Ctx {
         }
     }
 
+    /// The chat an event is about, for chat scopes, when there is no message for it.
+    pub fn with_chat(self, chat: Option<i64>) -> Self {
+        Self {
+            chat_id: chat,
+            ..self
+        }
+    }
+
     /// Marks the call as a command, which may wait for a permission answer.
     pub fn interactive(self) -> Self {
         Self {
@@ -119,30 +127,36 @@ impl Ctx {
         }
     }
 
-    fn has_permission(&self, permission: &str) -> bool {
+    fn has_permission(&self, permission: &str, chat: Option<i64>) -> bool {
         super::scope::allows(
             self.trusted,
             &self.permissions,
             &self.scopes,
             permission,
             &self.session_file,
-            self.chat_id,
+            chat,
         )
     }
 
     async fn require_permission(&self, permission: &str) -> mlua::Result<()> {
-        self.require(permission, None).await
+        self.require(permission, None, self.chat_id).await
     }
 
     /// `network` for a request to `url`, so a host scope applies and a request can offer to
     /// allow just that host.
     async fn require_network(&self, url: &str) -> mlua::Result<()> {
-        self.require("network", Some(http::host_of(url))).await
+        self.require("network", Some(http::host_of(url)), self.chat_id)
+            .await
     }
 
     /// Checks a permission. When it is missing, a sandboxed module asks the owner through the
     /// inbox: a command waits for the answer, a background call fails at once.
-    async fn require(&self, permission: &str, host: Option<String>) -> mlua::Result<()> {
+    async fn require(
+        &self,
+        permission: &str,
+        host: Option<String>,
+        chat: Option<i64>,
+    ) -> mlua::Result<()> {
         let in_host_scope = || match (&host, self.scopes.get(permission)) {
             (Some(host), Some(scope)) if !scope.hosts.is_empty() => scope
                 .hosts
@@ -150,7 +164,7 @@ impl Ctx {
                 .any(|pattern| super::scope::host_matches(pattern, host)),
             _ => true,
         };
-        let allowed = self.has_permission(permission) && (self.trusted || in_host_scope());
+        let allowed = self.has_permission(permission, chat) && (self.trusted || in_host_scope());
         if self.trusted {
             return Ok(());
         }
@@ -184,7 +198,7 @@ impl Ctx {
             module: self.module_name.clone(),
             permission: permission.to_string(),
             host: host.clone(),
-            chat: self.chat_id,
+            chat,
             account: self.session_file.clone(),
         };
         let (id, mut answer) = match requests.open(subject.clone()) {
@@ -541,6 +555,47 @@ impl UserData for Ctx {
                 };
                 let at = SystemTime::now() + Duration::from_secs(seconds);
                 telegram::send_scheduled(&ctx.client, &ctx.runtime, peer, &text, at)
+                    .await
+                    .map_err(rt)
+            },
+        );
+
+        // A message to any chat this account can reach: `me`, `@username`, or a chat id.
+        methods.add_async_method(
+            "send",
+            |_, ctx, (chat, text): (mlua::Value, String)| async move {
+                ctx.throttle(Action::Message)?;
+                let spec = match chat {
+                    mlua::Value::Integer(id) => id.to_string(),
+                    mlua::Value::Number(id) => (id as i64).to_string(),
+                    mlua::Value::String(name) => name.to_str()?.to_string(),
+                    _ => {
+                        return Err(mlua::Error::runtime(
+                            "send needs a chat id, @username, or \"me\"",
+                        ))
+                    }
+                };
+                let spec = spec.trim().to_string();
+                let peer = if spec.eq_ignore_ascii_case("me") || spec.eq_ignore_ascii_case("saved")
+                {
+                    telegram::saved_messages()
+                } else {
+                    let services = &ctx.loader.services;
+                    let handle = services
+                        .accounts
+                        .by_session(&ctx.session_file)
+                        .await
+                        .ok_or_else(|| mlua::Error::runtime("this account is not connected"))?;
+                    let peer = services
+                        .automations
+                        .resolve_chat(&handle, &spec)
+                        .await
+                        .map_err(rt)?;
+                    ctx.require("telegram.send", None, Some(peer.id.bot_api_dialog_id()))
+                        .await?;
+                    peer
+                };
+                telegram::send_markdown(&ctx.client, &ctx.runtime, peer, &text)
                     .await
                     .map_err(rt)
             },

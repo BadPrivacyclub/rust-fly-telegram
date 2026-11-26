@@ -1091,7 +1091,7 @@
       openModal(`${module.name} · ${Fly.t("Settings")}`, form);
     }
 
-    const PERMISSIONS = ["network", "telegram.read", "telegram.history", "telegram.media", "modules.install", "secrets", "shell", "core.admin"];
+    const PERMISSIONS = ["network", "telegram.read", "telegram.history", "telegram.media", "telegram.send", "telegram.deleted", "modules.install", "secrets", "shell", "core.admin"];
     const DANGEROUS = ["modules.install", "secrets", "shell", "core.admin"];
 
     function openPermissions(module) {

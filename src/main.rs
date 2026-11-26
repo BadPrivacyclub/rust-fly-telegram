@@ -148,6 +148,7 @@ async fn run() -> Result<()> {
 
     let loader = Arc::new(Loader::new(Arc::clone(&services), config::MODULES_DIR).await?);
     loader.load_all().await?;
+    loader::schedule::spawn(Arc::clone(&loader));
 
     {
         let loader_w = Arc::clone(&loader);

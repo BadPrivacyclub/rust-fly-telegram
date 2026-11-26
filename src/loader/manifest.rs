@@ -17,6 +17,8 @@ pub const KNOWN_PERMISSIONS: &[&str] = &[
     "telegram.read",
     "telegram.history",
     "telegram.media",
+    "telegram.send",
+    "telegram.deleted",
     "modules.install",
     "secrets",
     "shell",
@@ -26,6 +28,26 @@ pub const KNOWN_PERMISSIONS: &[&str] = &[
 /// Permissions that are fine alone but together let a module take something from this computer
 /// or account and send it elsewhere.
 const RISKY_PAIRS: &[(&str, &str, &str)] = &[
+    (
+        "telegram.read",
+        "telegram.send",
+        "It can read your incoming messages and pass them to any chat.",
+    ),
+    (
+        "telegram.history",
+        "telegram.send",
+        "It can read your chat history and pass it to any chat.",
+    ),
+    (
+        "telegram.deleted",
+        "telegram.send",
+        "It can read deleted messages and pass them to any chat.",
+    ),
+    (
+        "telegram.deleted",
+        "network",
+        "It can read deleted messages and send them to any server.",
+    ),
     (
         "secrets",
         "network",
@@ -315,6 +337,19 @@ pub fn audit_source(source: &str) -> Vec<String> {
             || lower.contains("ctx:download_url")
             || lower.contains("ctx:send_file"),
         "telegram.media",
+    );
+    push_capability(
+        &mut capabilities,
+        lower.contains("ctx:send("),
+        "telegram.send",
+    );
+    push_capability(
+        &mut capabilities,
+        lower.contains("function m.on_")
+            || lower.contains("m.on_message")
+            || lower.contains("m.on_edit")
+            || lower.contains("m.on_delete"),
+        "telegram.read",
     );
     push_capability(&mut capabilities, lower.contains("ctx:env_get"), "secrets");
     push_capability(
