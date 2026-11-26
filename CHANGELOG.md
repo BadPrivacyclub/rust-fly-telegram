@@ -54,6 +54,8 @@
 - Sandboxed modules with the `network` permission reach public servers only. Requests to
   `localhost`, loopback, private, link-local, and cloud metadata addresses are refused,
   also after a redirect and when a name resolves to such an address.
+- A file that a sandboxed module sends or uploads must really be inside `data/downloads/`:
+  a symbolic link there pointing elsewhere is refused.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request

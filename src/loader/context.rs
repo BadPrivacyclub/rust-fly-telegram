@@ -32,6 +32,26 @@ pub(crate) const SANDBOX_KEY_PREFIX: &str = "mod.";
 pub(crate) fn key_namespace(module: &str) -> String {
     format!("{SANDBOX_KEY_PREFIX}{module}.")
 }
+
+/// Whether a sandboxed module may use `path`, relative to the data directory `base`. The text
+/// of the path must name a file inside an allowed directory, and when the file exists its real
+/// location must too, so a symbolic link inside the directory cannot point elsewhere.
+fn sandbox_file_allowed(base: &Path, path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let Some(dir) = SANDBOX_FILE_DIRS
+        .iter()
+        .find(|dir| normalized.starts_with(*dir))
+    else {
+        return false;
+    };
+    if normalized.split('/').any(|part| part == "..") {
+        return false;
+    }
+    match std::fs::canonicalize(base.join(&normalized)) {
+        Ok(real) => std::fs::canonicalize(base.join(dir)).is_ok_and(|root| real.starts_with(root)),
+        Err(_) => true,
+    }
+}
 /// Where a sandboxed module may read files from: what it downloaded itself. Everything else in
 /// the data directory is sessions, keys, the database, or archives.
 const SANDBOX_FILE_DIRS: &[&str] = &["data/downloads/"];
@@ -118,11 +138,7 @@ impl Ctx {
     }
 
     fn check_file(&self, path: &str) -> mlua::Result<()> {
-        let path = path.replace('\\', "/");
-        if self.trusted
-            || (!path.split('/').any(|part| part == "..")
-                && SANDBOX_FILE_DIRS.iter().any(|dir| path.starts_with(dir)))
-        {
+        if self.trusted || sandbox_file_allowed(Path::new("."), path) {
             return Ok(());
         }
         Err(mlua::Error::runtime(format!(
@@ -2411,5 +2427,38 @@ mod fetch_tests {
         let plain = fetch_request(&lua, "https://example.com".into(), None).unwrap();
         assert_eq!(plain.method, "GET");
         assert!(plain.body.is_none());
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn sandboxed_files_stay_inside_downloads() {
+        let base = std::env::temp_dir().join(format!("fly_files_{}", uuid::Uuid::new_v4()));
+        let downloads = base.join("data").join("downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::write(downloads.join("ok.txt"), "ok").unwrap();
+        std::fs::write(base.join("database.json"), "{}").unwrap();
+
+        assert!(sandbox_file_allowed(&base, "data/downloads/ok.txt"));
+        assert!(sandbox_file_allowed(&base, r"data\downloads\ok.txt"));
+        assert!(sandbox_file_allowed(&base, "data/downloads/not-yet.bin"));
+        assert!(!sandbox_file_allowed(&base, "database.json"));
+        assert!(!sandbox_file_allowed(
+            &base,
+            "data/downloads/../../database.json"
+        ));
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(base.join("database.json"), downloads.join("link"));
+        #[cfg(windows)]
+        let linked =
+            std::os::windows::fs::symlink_file(base.join("database.json"), downloads.join("link"));
+        if linked.is_ok() {
+            assert!(!sandbox_file_allowed(&base, "data/downloads/link"));
+        }
+        let _ = std::fs::remove_dir_all(base);
     }
 }
