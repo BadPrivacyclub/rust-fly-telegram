@@ -20,6 +20,7 @@ use crate::runtime::RuntimeState;
 use crate::telegram;
 
 use super::manifest::ModuleManifest;
+use super::quota::{self, Action};
 use super::{http, installer, Account, Loader};
 
 const GROUP_INFO_SCAN_LIMIT: usize = 20_000;
@@ -113,6 +114,37 @@ impl Ctx {
                 self.module_name, permission
             )))
         }
+    }
+
+    async fn check_quota(&self, key: &str, value: &serde_json::Value) -> mlua::Result<()> {
+        let size = serde_json::to_string(value).map_or(0, |text| text.len());
+        if size > quota::MAX_VALUE_BYTES {
+            return Err(mlua::Error::runtime(format!(
+                "module '{}' tried to store {size} bytes under one key, the limit is {}",
+                self.module_name,
+                quota::MAX_VALUE_BYTES
+            )));
+        }
+        if self.db.get(key).await.is_null()
+            && self.db.keys_with_prefix(&self.key_namespace()).await.len() >= quota::MAX_KEYS
+        {
+            return Err(mlua::Error::runtime(format!(
+                "module '{}' already keeps {} keys, delete some before adding more",
+                self.module_name,
+                quota::MAX_KEYS
+            )));
+        }
+        Ok(())
+    }
+
+    fn throttle(&self, action: Action) -> mlua::Result<()> {
+        if self.trusted {
+            return Ok(());
+        }
+        self.loader
+            .rate
+            .take(&self.module_name, action)
+            .map_err(mlua::Error::runtime)
     }
 
     fn reach(&self) -> http::Reach {
@@ -285,6 +317,7 @@ pub fn message_table(
 impl UserData for Ctx {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_method("reply", |_, ctx, text: String| async move {
+            ctx.throttle(Action::Message)?;
             if let Some(msg) = ctx.current_message().await {
                 telegram::msg_respond(&ctx.runtime, &msg, &text)
                     .await
@@ -294,6 +327,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("answer", |_, ctx, text: String| async move {
+            ctx.throttle(Action::Message)?;
             if let Some(msg) = ctx.current_message().await {
                 for chunk in telegram::split_text(&text) {
                     ctx.runtime.wait_for_telegram_send().await;
@@ -307,6 +341,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("edit", |_, ctx, text: String| async move {
+            ctx.throttle(Action::Message)?;
             if let Some(msg) = ctx.current_message().await {
                 telegram::msg_edit_or_respond(&ctx.runtime, &msg, &text)
                     .await
@@ -366,6 +401,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "schedule",
             |_, ctx, (seconds, text, target): (u64, String, Option<String>)| async move {
+                ctx.throttle(Action::Message)?;
                 if !(10..=MAX_SCHEDULE_SECONDS).contains(&seconds) {
                     return Err(mlua::Error::runtime(
                         "schedule delay must be between 10 seconds and 365 days",
@@ -383,12 +419,14 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("send_saved", |_, ctx, text: String| async move {
+            ctx.throttle(Action::Message)?;
             telegram::send_markdown(&ctx.client, &ctx.runtime, telegram::saved_messages(), &text)
                 .await
                 .map_err(rt)
         });
 
         methods.add_async_method("pin", |_, ctx, ()| async move {
+            ctx.throttle(Action::Message)?;
             ctx.require_permission("telegram.history")?;
             let msg = ctx
                 .current_message()
@@ -404,6 +442,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("unpin", |_, ctx, ()| async move {
+            ctx.throttle(Action::Message)?;
             ctx.require_permission("telegram.history")?;
             let msg = ctx
                 .current_message()
@@ -426,6 +465,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "tag_all",
             |_, ctx, (text, limit): (Option<String>, Option<usize>)| async move {
+                ctx.throttle(Action::Message)?;
                 ctx.require_permission("telegram.history")?;
                 tag_all(ctx.clone(), text.unwrap_or_default(), limit.unwrap_or(100))
                     .await
@@ -434,6 +474,7 @@ impl UserData for Ctx {
         );
 
         methods.add_async_method("react", |_, ctx, emoji: String| async move {
+            ctx.throttle(Action::Message)?;
             let msg = ctx
                 .current_message()
                 .await
@@ -456,6 +497,9 @@ impl UserData for Ctx {
                     return ctx.db.remove(&key).await.map_err(rt);
                 }
                 let json = lua_to_json(&lua, value)?;
+                if !ctx.trusted {
+                    ctx.check_quota(&key, &json).await?;
+                }
                 ctx.db.set(key, json).await.map_err(rt)
             },
         );
@@ -516,6 +560,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("notify", |_, ctx, text: String| async move {
+            ctx.throttle(Action::Message)?;
             let html = format!(
                 "🧩 <b>{}</b>\n{}",
                 crate::notify::escape_html(&ctx.module_name),
@@ -1092,6 +1137,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("http_get", |_, ctx, url: String| async move {
+            ctx.throttle(Action::Network)?;
             ctx.require_permission("network")?;
             http::text(ctx.reach(), "GET", &url, None, Vec::new())
                 .await
@@ -1099,6 +1145,7 @@ impl UserData for Ctx {
         });
 
         methods.add_async_method("http_json_get", |lua, ctx, url: String| async move {
+            ctx.throttle(Action::Network)?;
             ctx.require_permission("network")?;
             let value = http::json(ctx.reach(), "GET", &url, None, Vec::new())
                 .await
@@ -1116,6 +1163,7 @@ impl UserData for Ctx {
                 Option<String>,
                 Option<mlua::Table>,
             )| async move {
+                ctx.throttle(Action::Network)?;
                 ctx.require_permission("network")?;
                 let headers = header_pairs(headers)?;
                 http::text(ctx.reach(), &method, &url, body, headers)
@@ -1134,6 +1182,7 @@ impl UserData for Ctx {
                 Option<String>,
                 Option<mlua::Table>,
             )| async move {
+                ctx.throttle(Action::Network)?;
                 ctx.require_permission("network")?;
                 let headers = header_pairs(headers)?;
                 let value = http::json(ctx.reach(), &method, &url, body, headers)
@@ -1155,6 +1204,7 @@ impl UserData for Ctx {
                 Option<mlua::Table>,
                 Option<mlua::Table>,
             )| async move {
+                ctx.throttle(Action::Network)?;
                 ctx.require_permission("network")?;
                 ctx.require_permission("telegram.media")?;
                 ctx.check_file(&path)?;
@@ -1179,6 +1229,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "fetch",
             |lua, ctx, (url, opts): (String, Option<mlua::Table>)| async move {
+                ctx.throttle(Action::Network)?;
                 ctx.require_permission("network")?;
                 let mut request = fetch_request(&lua, url, opts)?;
                 request.reach = ctx.reach();
@@ -1231,6 +1282,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "download_url",
             |_, ctx, (url, name): (String, Option<String>)| async move {
+                ctx.throttle(Action::Network)?;
                 ctx.require_permission("network")?;
                 ctx.require_permission("telegram.media")?;
                 download_url_to_file(ctx.reach(), &url, name.as_deref())
@@ -1242,6 +1294,7 @@ impl UserData for Ctx {
         methods.add_async_method(
             "send_file",
             |_, ctx, (path, caption): (String, Option<String>)| async move {
+                ctx.throttle(Action::Message)?;
                 ctx.require_permission("telegram.media")?;
                 ctx.check_file(&path)?;
                 send_file(ctx.clone(), path, caption.unwrap_or_default())

@@ -18,6 +18,7 @@ pub mod http;
 pub mod installer;
 pub mod manifest;
 pub mod meta;
+pub mod quota;
 
 use ed25519_dalek::VerifyingKey;
 
@@ -86,6 +87,7 @@ pub struct Loader {
     modules: RwLock<HashMap<String, Module>>,
     verifying_key: Option<VerifyingKey>,
     ui: Table,
+    pub(crate) rate: quota::RateLimiter,
 }
 
 impl Loader {
@@ -120,6 +122,7 @@ impl Loader {
             modules: RwLock::new(HashMap::new()),
             verifying_key,
             ui,
+            rate: quota::RateLimiter::default(),
         };
         loader.refresh_premium().await?;
         Ok(loader)

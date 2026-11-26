@@ -56,6 +56,9 @@
   also after a redirect and when a name resolves to such an address.
 - A file that a sandboxed module sends or uploads must really be inside `data/downloads/`:
   a symbolic link there pointing elsewhere is refused.
+- Sandboxed modules are rate limited (20 messages in a burst, then one every 3 seconds; 60
+  HTTP requests, then one per second) and may keep at most 1000 database keys of up to
+  256 KiB each, so a module cannot flood chats, which risks a ban, or bloat the database.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request

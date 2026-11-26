@@ -454,6 +454,9 @@ Every other module runs **sandboxed**:
 - Code that runs for 2 seconds without a pause (an `await` such as `ctx:edit` or an HTTP
   request) is stopped with an error; `pcall` cannot catch that error. Trusted modules get
   15 seconds.
+- Limits: 20 messages in a burst, then one every 3 seconds (`reply`, `edit`, `send_file`,
+  `notify`, and the like); 60 HTTP requests in a burst, then one per second; at most 1000
+  database keys and 256 KiB per value.
 - `ctx` methods require the permissions listed in its manifest:
 
 | Permission | Grants |
