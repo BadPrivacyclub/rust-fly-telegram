@@ -101,6 +101,12 @@ async fn run() -> Result<()> {
             return Ok(());
         }
         CliCommand::Service(action) => return service::run(action, &cli),
+        CliCommand::Types => {
+            for path in loader::write_types(Path::new(config::MODULES_DIR))? {
+                println!("Wrote {}", path.display());
+            }
+            return Ok(());
+        }
         CliCommand::Run | CliCommand::Help | CliCommand::Version => {}
     }
 

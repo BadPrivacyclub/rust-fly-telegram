@@ -321,6 +321,7 @@ Process-level options come from, highest priority first:
 | `fly-telegram init` | Write a default `config.toml` |
 | `fly-telegram service install\|uninstall\|print` | Background service |
 | `fly-telegram keygen` / `sign <module.lua>` | Module signing (see below) |
+| `fly-telegram types` | Lua type definitions for module authors in `modules/` |
 | `fly-telegram --version` / `--help` | |
 
 ### Data directory layout

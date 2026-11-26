@@ -37,6 +37,38 @@ use manifest::{ModuleInfo, ModuleManifest};
 use meta::{ConfigField, ModuleHelp};
 
 pub(crate) const UI_LIBRARY: &str = include_str!("ui.lua");
+/// Type definitions of the module API for the Lua language server.
+pub(crate) const TYPES: &str = include_str!("fly.d.lua");
+const LUARC: &str = r#"{
+  "runtime.version": "Lua 5.4",
+  "workspace.library": ["fly.d.lua"],
+  "diagnostics.globals": ["ui", "json"]
+}
+"#;
+
+/// A module source: a `.lua` file that is not a type definition (`.d.lua`).
+pub fn is_module_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "lua")
+        && !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".d.lua"))
+}
+
+/// Writes `fly.d.lua`, and `.luarc.json` unless one exists, into `dir`.
+pub fn write_types(dir: &Path) -> Result<Vec<PathBuf>> {
+    std::fs::create_dir_all(dir)?;
+    let mut written = Vec::new();
+    let types = dir.join("fly.d.lua");
+    std::fs::write(&types, TYPES)?;
+    written.push(types);
+    let luarc = dir.join(".luarc.json");
+    if !luarc.exists() {
+        std::fs::write(&luarc, LUARC)?;
+        written.push(luarc);
+    }
+    Ok(written)
+}
 
 /// The permission I require before a sandboxed module receives `on_message` events.
 pub const READ_PERMISSION: &str = "telegram.read";
@@ -204,7 +236,7 @@ impl Loader {
         let mut entries = tokio::fs::read_dir(&self.modules_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "lua") {
+            if is_module_file(&path) {
                 paths.push(path);
             }
         }
@@ -1682,6 +1714,48 @@ mod tests {
             .set_permissions("x", risky, Default::default(), false)
             .await
             .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn type_definitions_cover_the_whole_api() {
+        let context = include_str!("context.rs");
+        let methods = regex::Regex::new(r#"add_(?:async_)?method\(\s*"([a-z_0-9]+)""#).unwrap();
+        let mut missing = methods
+            .captures_iter(context)
+            .map(|c| c[1].to_string())
+            .filter(|name| !TYPES.contains(&format!("function Ctx:{name}(")))
+            .collect::<Vec<_>>();
+        let functions = regex::Regex::new(r"(?m)^function ui\.([a-z_0-9]+)\(").unwrap();
+        missing.extend(
+            functions
+                .captures_iter(UI_LIBRARY)
+                .map(|c| format!("ui.{}", &c[1]))
+                .filter(|name| !TYPES.contains(&format!("function {name}("))),
+        );
+        for handler in events::HANDLERS {
+            if !TYPES.contains(&format!("---@field {handler}?")) {
+                missing.push(handler.to_string());
+            }
+        }
+        assert!(missing.is_empty(), "missing from fly.d.lua: {missing:?}");
+        Lua::new()
+            .load(TYPES)
+            .exec()
+            .expect("fly.d.lua is valid Lua");
+    }
+
+    #[tokio::test]
+    async fn type_definitions_are_not_loaded_as_modules() {
+        let (loader, dir) = loader_with(&[("x.lua", "return { commands = {} }")]).await;
+        let written = write_types(&dir).unwrap();
+        assert_eq!(written.len(), 2);
+        assert!(write_types(&dir).unwrap().len() == 1, ".luarc.json is kept");
+        loader.load_all().await.unwrap();
+        let names = loader.module_names().await;
+        assert_eq!(names, vec!["x".to_string()]);
+        assert!(!is_module_file(&dir.join("fly.d.lua")));
+        assert!(is_module_file(&dir.join("x.lua")));
         let _ = std::fs::remove_dir_all(dir);
     }
 

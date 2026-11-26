@@ -162,6 +162,23 @@ pub async fn status(State(state): State<AppState>) -> Response {
     Json(body).into_response()
 }
 
+pub async fn module_types() -> Response {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "text/plain; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"fly.d.lua\"".to_string(),
+            ),
+        ],
+        crate::loader::TYPES,
+    )
+        .into_response()
+}
+
 pub async fn modules(State(state): State<AppState>) -> Response {
     let loader = try_loader!(state);
     Json(loader.summaries().await).into_response()

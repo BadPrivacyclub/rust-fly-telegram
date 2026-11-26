@@ -4,6 +4,11 @@
 
 ### New
 
+- **Type definitions for module authors**: `fly-telegram types` (or Modules, **Download types**)
+  writes `fly.d.lua` and `.luarc.json`, so the Lua language server completes `ctx`, `ui`,
+  `json`, events, and the module table, with the permission each method needs. A test keeps
+  the file in step with the API.
+
 - **Encrypted backups in Telegram** (Backups page): every N hours, or on demand, a backup
   encrypted with its own password goes to a private channel of the first account. Each copy
   is downloaded again and opened to check it, older copies beyond the kept number are

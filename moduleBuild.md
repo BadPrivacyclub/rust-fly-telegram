@@ -753,6 +753,12 @@ ctx:edit(ui.ok(ru and "Готово" or "Done"))
 
 ## Debugging and testing
 
+**Editor support.** `fly-telegram types` writes `fly.d.lua` and `.luarc.json` into
+`modules/` (Modules, **Download types** in the panel gives the same file). With the Lua
+language server (the "Lua" extension of VS Code, for example) you get completion and
+signatures for `ctx`, `ui`, `json`, the event tables, and the module table, and every method
+notes the permission it needs. Files ending in `.d.lua` are never loaded as modules.
+
 - **Errors in chat**: when a handler fails, the userbot edits the command message into
   an error card: the reason without the stack trace, a hint (network, permission,
   API key, or a module bug), the command's usage, and `module.lua:line`.

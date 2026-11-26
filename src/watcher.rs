@@ -23,6 +23,11 @@ pub async fn watch(dir: impl AsRef<Path>, loader: Arc<Loader>) -> Result<()> {
         match event {
             Ok(ev) if matches!(ev.kind, EventKind::Modify(_) | EventKind::Create(_)) => {
                 for path in ev.paths {
+                    if path.extension().is_some_and(|e| e == "lua")
+                        && !crate::loader::is_module_file(&path)
+                    {
+                        continue;
+                    }
                     let reload_path = if path.extension().is_some_and(|e| e == "lua") {
                         Some(path.clone())
                     } else {

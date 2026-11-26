@@ -149,6 +149,7 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
         .route("/api/inbox/read", post(inbox_api::mark_read))
         .route("/api/inbox/action", post(inbox_api::act))
         .route("/api/modules", get(api::modules))
+        .route("/api/modules/types", get(api::module_types))
         .route("/api/modules/install", post(api::install_module))
         .route("/api/modules/restore", post(api::restore_modules))
         .route("/api/modules/{name}", delete(api::remove_module))

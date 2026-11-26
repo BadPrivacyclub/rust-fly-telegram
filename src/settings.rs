@@ -111,6 +111,7 @@ pub enum CliCommand {
     Doctor,
     InitConfig,
     Service(ServiceAction),
+    Types,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,6 +136,7 @@ impl Cli {
                 }
                 "doctor" | "--doctor" => cli.command = CliCommand::Doctor,
                 "init" | "--init-config" => cli.command = CliCommand::InitConfig,
+                "types" => cli.command = CliCommand::Types,
                 "service" => {
                     let action = match args.next().as_deref() {
                         Some("install") => ServiceAction::Install,
@@ -196,6 +198,7 @@ COMMANDS:
     service print       Print the service definition without installing it
     keygen              Generate an Ed25519 module signing key pair
     sign <module.lua>   Sign a module manifest with the operator key
+    types               Write Lua type definitions for module authors into modules/
     version             Print the version
     help                Print this help
 
