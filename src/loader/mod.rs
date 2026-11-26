@@ -510,6 +510,12 @@ impl Loader {
 
     pub async fn handle_message(self: &Arc<Self>, account: Account, msg: Message) -> Result<()> {
         let db = &self.services.db;
+        // Most messages are not commands; the prefix check is the cheapest way to skip them.
+        let prefixes = core_settings::prefixes(db).await;
+        let Some((cmd, args)) = core_settings::parse_command(msg.text(), &prefixes) else {
+            return Ok(());
+        };
+
         let own = is_own_command_message(&account.client, &msg, &account.own_user_id).await;
         let sudo = !own
             && msg
@@ -524,28 +530,18 @@ impl Loader {
             return Ok(());
         }
 
-        let prefixes = core_settings::prefixes(db).await;
-        let Some((cmd, args)) = core_settings::parse_command(msg.text(), &prefixes) else {
-            return Ok(());
-        };
-
         let disabled = core_settings::disabled_modules(db).await;
         let target = {
             let modules = self.modules.read().await;
-            modules
-                .iter()
-                .filter(|(name, _)| !disabled.contains(name))
-                .find_map(|(_, module)| {
-                    module.commands.get(&cmd).map(|handler| {
-                        (
-                            module.table.clone(),
-                            handler.clone(),
-                            module.manifest.clone(),
-                            module.help.clone(),
-                            module.config.clone(),
-                        )
-                    })
-                })
+            command_owner(&modules, &cmd, &disabled).map(|module| {
+                (
+                    module.table.clone(),
+                    module.commands[&cmd].clone(),
+                    module.manifest.clone(),
+                    module.help.clone(),
+                    module.config.clone(),
+                )
+            })
         };
 
         let lang = core_settings::language(db).await;
@@ -1063,6 +1059,26 @@ async fn is_own_command_message(
         .is_ok_and(|own_user_id| *own_user_id == sender_id)
 }
 
+/// The module that runs `cmd` when several enabled modules declare it: a trusted module before
+/// a sandboxed one, so a sandboxed module cannot take over a built-in command and receive what
+/// the owner types after it, then the module name, so the choice does not depend on map order.
+fn command_owner<'a>(
+    modules: &'a HashMap<String, Module>,
+    cmd: &str,
+    disabled: &[String],
+) -> Option<&'a Module> {
+    modules
+        .iter()
+        .filter(|(name, module)| !disabled.contains(name) && module.commands.contains_key(cmd))
+        .min_by(|(a_name, a), (b_name, b)| {
+            b.manifest
+                .trusted
+                .cmp(&a.manifest.trusted)
+                .then_with(|| a_name.cmp(b_name))
+        })
+        .map(|(_, module)| module)
+}
+
 fn collect_commands(table: &Table) -> Result<HashMap<String, String>> {
     let Ok(cmds_table) = table.get::<Table>("commands") else {
         return Ok(HashMap::new());
@@ -1364,6 +1380,37 @@ return M
         .await;
         let modules = loader.modules.read().await;
         assert_eq!(modules["thief"].manifest.name, "thief");
+        drop(modules);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn sandboxed_modules_cannot_take_over_built_in_commands() {
+        let core = crate::bundled::bundled_source("core.lua").unwrap();
+        let core_manifest = crate::bundled::bundled_source("core.lua.manifest.json").unwrap();
+        let (loader, dir) = loader_with(&[
+            ("aaa.lua", r#"return { commands = { ping = "ping" } }"#),
+            ("core.lua", core),
+            ("core.lua.manifest.json", core_manifest),
+            (
+                "zzz.lua",
+                r#"return { commands = { ping = "ping", own = "own" } }"#,
+            ),
+        ])
+        .await;
+        let modules = loader.modules.read().await;
+        assert!(modules["core"].manifest.trusted);
+        for _ in 0..10 {
+            let owner = command_owner(&modules, "ping", &[]).unwrap();
+            assert_eq!(owner.manifest.name, "core");
+        }
+        let disabled = vec!["core".to_string()];
+        let owner = command_owner(&modules, "ping", &disabled).unwrap();
+        assert_eq!(owner.manifest.name, "aaa");
+        assert_eq!(
+            command_owner(&modules, "own", &[]).unwrap().manifest.name,
+            "zzz"
+        );
         drop(modules);
         let _ = std::fs::remove_dir_all(dir);
     }

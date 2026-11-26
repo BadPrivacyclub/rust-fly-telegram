@@ -59,6 +59,9 @@
 - Sandboxed modules are rate limited (20 messages in a burst, then one every 3 seconds; 60
   HTTP requests, then one per second) and may keep at most 1000 database keys of up to
   256 KiB each, so a module cannot flood chats, which risks a ban, or bloat the database.
+- When several modules declare the same command, a trusted module runs it before a sandboxed
+  one, so a sandboxed module can no longer take over a built-in command such as `.cfg` and
+  receive what you type after it. Before, the choice depended on map order.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request
