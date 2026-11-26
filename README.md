@@ -362,11 +362,13 @@ keys/                  module signing keys
   them. Sessions use `HttpOnly`, `SameSite=Strict` cookies. Password attempts are
   rate-limited and passwords are stored as Argon2 hashes.
 - **Modules**: built-in modules that are byte-identical to the copies embedded in the
-  binary are trusted. Any other module runs in a Lua sandbox with no `os`, `io`, or
-  `load`, and cannot read credentials, panel settings, or other modules' settings.
-  Its capabilities (`network`, `telegram.read`, `telegram.history`, `telegram.media`,
-  `secrets`, `shell`, `modules.install`, `core.admin`) are granted in the panel or in
-  its manifest.
+  binary are trusted. Any other module runs in a Lua sandbox of its own (64 MiB) with no
+  `os`, `io`, or `load`, keeps its data in its own key space, and cannot read credentials,
+  panel settings, or other modules' data and settings. It is stopped after 2 seconds of
+  work without a pause, is rate limited, reaches public servers only, and cannot take over
+  a built-in command. Its capabilities (`network`, `telegram.read`, `telegram.history`,
+  `telegram.media`, `secrets`, `shell`, `modules.install`, `core.admin`) are granted in
+  the panel or in its manifest, and the panel shows how often each one was used.
 - **Module signing**: to give one of your own modules full trust, run
   `fly-telegram keygen` once, then `fly-telegram sign modules/my.lua`. The signature
   covers the source, name, version, and permissions.
