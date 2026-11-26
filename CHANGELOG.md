@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+The control bot is gone: notifications and questions now arrive in the panel inbox. Modules
+get their own sandboxes, permission requests and scopes, new events, schedules, metrics, and
+type definitions, and backups can go to Telegram encrypted.
+
+### Upgrading from 0.2
+
+- The control bot is removed. Its token is deleted from the database on the first start, and
+  `TELOXIDE_TOKEN` is no longer read. Notifications appear in the inbox; turn on
+  **Notify: copy to a private channel** in Settings to get them on your phone.
+- Sandboxed modules keep their data under `mod.<module>.`, so data a third-party module
+  stored under other keys before is not visible to it any more. Built-in and signed modules
+  are not affected.
+- A sandboxed module always uses its file name, whatever its manifest says.
+- Sandboxed modules with `network` reach public servers only.
+
 
 ### New
 

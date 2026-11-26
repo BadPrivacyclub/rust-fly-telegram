@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/BadPrivacyclub/rust-fly-telegram)](https://github.com/BadPrivacyclub/rust-fly-telegram/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast Telegram userbot written in Rust, with hot-reloaded Lua modules, a local web
+A fast Telegram userbot written in Rust, with hot-reloaded Lua modules and a local web
 panel. One executable, no runtime dependencies.
 
 - **28 built-in modules**: notes, reminders, keyword auto-replies, AI (OpenAI, Anthropic,
@@ -24,12 +24,20 @@ panel. One executable, no runtime dependencies.
 - **Inbox**: notifications in the panel: module errors, startup, finished tasks, deleted
   messages, and new private messages with **Allow** and **Block** buttons. A copy can go
   to a private channel of your account, so it reaches your phone.
+- **Module platform**: every third-party module runs in a Lua sandbox of its own with time,
+  memory, and rate limits. A module that needs a permission asks in the inbox, and a
+  permission can be limited to chats, hosts, or accounts. Modules react to new, edited, and
+  deleted messages, joins, and reactions, run on a schedule, and show their CPU time,
+  memory, and errors in the panel. `fly-telegram types` gives editors completion for the
+  whole API.
+- **Encrypted backups in Telegram**: on a schedule, encrypted with a password of their own,
+  kept in a private channel of your account, and restored from the panel.
 - **Download and run**: unpack the archive and double-click; the setup wizard opens in
   your browser. One-line installers, a background service with one command, and
   self-update from GitHub Releases.
 - **Safe by default**: the panel only accepts local connections and requires a login.
-  Third-party modules run in a sandbox until you grant permissions. A master password
-  encrypts your data on disk.
+  Third-party modules get nothing until you grant it, and reach public servers only. A
+  master password encrypts your data on disk.
 
 ---
 
