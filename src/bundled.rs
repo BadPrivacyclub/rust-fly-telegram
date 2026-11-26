@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn pristine_check_ignores_line_endings() {
-        let source = bundled_source("core.lua").unwrap().replace('\n', "\r\n");
+        let source = normalize(bundled_source("core.lua").unwrap()).replace('\n', "\r\n");
         assert!(is_pristine("core.lua", &source));
         assert!(!is_pristine("core.lua", "return {}"));
     }

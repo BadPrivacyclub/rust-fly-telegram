@@ -1,0 +1,6 @@
+# Sources keep LF on every platform: module hashes and signatures cover the exact bytes.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ttf binary
+*.pub binary
