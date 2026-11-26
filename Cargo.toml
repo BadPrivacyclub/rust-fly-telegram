@@ -73,3 +73,10 @@ axum-test = "20"
 lto = "thin"
 strip = true
 codegen-units = 4
+
+# Published release binaries: slower to build, smaller and faster to run. Local builds and
+# self-update from source keep the quicker `release` profile.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

@@ -45,14 +45,14 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --profile dist --locked --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           name="fly-telegram-${{ matrix.target }}"
-          out="target/${{ matrix.target }}/release"
+          out="target/${{ matrix.target }}/dist"
           mkdir -p "dist/$name"
           cp "$out/fly-telegram" "$out/music-worker" README.md LICENSE START-HERE.txt "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
@@ -65,7 +65,7 @@ jobs:
         shell: pwsh
         run: |
           $name = "fly-telegram-${{ matrix.target }}"
-          $out = "target/${{ matrix.target }}/release"
+          $out = "target/${{ matrix.target }}/dist"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item "$out/fly-telegram.exe", "$out/music-worker.exe", README.md, LICENSE, START-HERE.txt "dist/$name/"
           Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
