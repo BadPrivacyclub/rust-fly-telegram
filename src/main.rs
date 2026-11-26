@@ -26,6 +26,7 @@ mod jobs;
 mod loader;
 mod logs;
 mod notify;
+mod offsite;
 mod persona;
 mod premium;
 mod private_channel;
@@ -149,6 +150,7 @@ async fn run() -> Result<()> {
     let loader = Arc::new(Loader::new(Arc::clone(&services), config::MODULES_DIR).await?);
     loader.load_all().await?;
     loader::schedule::spawn(Arc::clone(&loader));
+    offsite::spawn(Arc::clone(&services));
 
     {
         let loader_w = Arc::clone(&loader);

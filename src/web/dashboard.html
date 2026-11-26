@@ -277,6 +277,34 @@
             <div><button class="btn btn-danger" id="restore-btn" data-i18n="Restore and restart">Restore and restart</button></div>
           </div>
         </div>
+        <div class="card stack" style="margin-top:16px">
+          <div class="card-head"><h2 data-i18n="Encrypted backups in Telegram">Encrypted backups in Telegram</h2><span id="offsite-state"></span></div>
+          <p class="muted" style="margin:0" data-i18n="The backup is encrypted with its own password and kept in a private channel of your first account. It includes the key of sealed settings, so a restore on another computer keeps your API hash and module secrets. Sessions are never included.">The backup is encrypted with its own password and kept in a private channel of your first account. It includes the key of sealed settings, so a restore on another computer keeps your API hash and module secrets. Sessions are never included.</p>
+          <div class="grid grid-2">
+            <div class="field">
+              <label for="offsite-password" data-i18n="Backup password">Backup password</label>
+              <input class="input" type="password" id="offsite-password" autocomplete="new-password" placeholder="••••••••">
+              <span class="hint" data-i18n="At least 8 characters. Without it a backup cannot be opened, so keep it somewhere safe.">At least 8 characters. Without it a backup cannot be opened, so keep it somewhere safe.</span>
+            </div>
+            <div class="grid grid-2">
+              <div class="field">
+                <label for="offsite-every" data-i18n="Every, hours">Every, hours</label>
+                <input class="input" type="number" min="0" max="720" id="offsite-every">
+                <span class="hint" data-i18n="0 turns the schedule off">0 turns the schedule off</span>
+              </div>
+              <div class="field">
+                <label for="offsite-keep" data-i18n="Copies to keep">Copies to keep</label>
+                <input class="input" type="number" min="1" max="50" id="offsite-keep">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn btn-primary" id="offsite-save" data-i18n="Save">Save</button>
+            <button class="btn" id="offsite-run" data-i18n="Back up now">Back up now</button>
+            <button class="btn btn-danger hidden" id="offsite-clear" data-i18n="Remove password">Remove password</button>
+          </div>
+          <div class="stack" id="offsite-list"></div>
+        </div>
       </section>
 
       <section class="page hidden" id="page-settings">
@@ -435,6 +463,23 @@
       "Set a panel password so the panel is not only protected by one-time links.": "Задайте пароль панели, чтобы вход не зависел только от одноразовых ссылок.",
       "Your database is stored unencrypted. Set a master password in Settings → Security.": "База хранится без шифрования. Задайте мастер-пароль в Настройки → Безопасность.",
       "Grant permissions": "Выдать разрешения",
+      "Encrypted backups in Telegram": "Зашифрованные бэкапы в Telegram",
+      "The backup is encrypted with its own password and kept in a private channel of your first account. It includes the key of sealed settings, so a restore on another computer keeps your API hash and module secrets. Sessions are never included.": "Бэкап шифруется собственным паролем и хранится в приватном канале первого аккаунта. В нём есть ключ запечатанных настроек, поэтому при восстановлении на другом компьютере API hash и секреты модулей сохранятся. Сессии в бэкап не попадают.",
+      "Backup password": "Пароль бэкапа",
+      "At least 8 characters. Without it a backup cannot be opened, so keep it somewhere safe.": "Не меньше 8 символов. Без него бэкап не открыть, храните его в надёжном месте.",
+      "Every, hours": "Каждые, часов",
+      "0 turns the schedule off": "0 выключает расписание",
+      "Copies to keep": "Сколько копий хранить",
+      "Back up now": "Сделать бэкап сейчас",
+      "Remove password": "Удалить пароль",
+      "Last backup": "Последний бэкап",
+      "Ready": "Готово",
+      "No password": "Нет пароля",
+      "No backups in Telegram yet.": "В Telegram пока нет бэкапов.",
+      "Remove the backup password? Scheduled backups stop.": "Удалить пароль бэкапа? Бэкапы по расписанию прекратятся.",
+      "Backup saved": "Бэкап сохранён",
+      "Restoring": "Восстановление",
+      "Backup password (leave empty to use the saved one)": "Пароль бэкапа (пустое поле: сохранённый пароль)",
       "ms/min": "мс/мин", "ms": "мс", "Stops": "Остановок", "Memory": "Память", "Errors": "Ошибок",
       "Only these hosts, such as api.example.com or *.example.com": "Только эти хосты, например api.example.com или *.example.com",
       "Only these chat IDs": "Только эти ID чатов",
@@ -763,7 +808,7 @@
       $("sidebar").classList.remove("open");
       Fly.store.set("fly.page", page);
       if (location.hash !== `#${page}`) history.replaceState(null, "", `#${page}`);
-      ({ inbox: loadInbox, overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: () => { loadAdSettings(); loadDeleted(); }, backups: loadSettings, settings: () => { loadSettings(); loadPremium(); loadDevices(); loadPanelSessions(); } })[page]?.();
+      ({ inbox: loadInbox, overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: () => { loadAdSettings(); loadDeleted(); }, backups: () => { loadSettings(); loadOffsite(); }, settings: () => { loadSettings(); loadPremium(); loadDevices(); loadPanelSessions(); } })[page]?.();
     }
     document.querySelectorAll(".nav-item").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.page)));
     $("menu-toggle").addEventListener("click", () => $("sidebar").classList.toggle("open"));
@@ -1314,6 +1359,50 @@
       language: $("set-language").value,
       sudo_users: $("set-sudo").value.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n)),
     }).catch(() => {}));
+    async function loadOffsite() {
+      let s;
+      try { s = await Fly.api("/api/backup/offsite"); } catch { return; }
+      $("offsite-every").value = s.every_hours;
+      $("offsite-keep").value = s.keep;
+      $("offsite-clear").classList.toggle("hidden", !s.password_set);
+      $("offsite-state").innerHTML = s.password_set
+        ? `<span class="badge ok">${esc(Fly.t(s.last ? "Last backup" : "Ready"))}${s.last ? " " + esc(new Date(s.last * 1000).toLocaleString()) : ""}</span>`
+        : `<span class="badge">${esc(Fly.t("No password"))}</span>`;
+      let items = [];
+      try { items = await Fly.api("/api/backup/offsite/list"); } catch { items = []; }
+      $("offsite-list").innerHTML = items.length ? items.map((b) => `
+        <div class="row between"><div><div class="small mono">${esc(b.name)}</div>
+          <div class="small faint">${esc(new Date(b.date * 1000).toLocaleString())} · ${Fly.bytes(b.size)}</div></div>
+          <button class="btn btn-sm btn-danger" data-offsite-restore="${b.id}">${esc(Fly.t("Restore and restart"))}</button></div>`).join("")
+        : `<p class="small faint" style="margin:0">${esc(Fly.t("No backups in Telegram yet."))}</p>`;
+    }
+    $("offsite-save").addEventListener("click", async () => {
+      const body = { every_hours: Number($("offsite-every").value) || 0, keep: Number($("offsite-keep").value) || 5 };
+      if ($("offsite-password").value) body.password = $("offsite-password").value;
+      await action(() => Fly.api("/api/backup/offsite", { body }), "Saved").catch(() => {});
+      $("offsite-password").value = "";
+      loadOffsite();
+    });
+    $("offsite-clear").addEventListener("click", async () => {
+      if (!confirm(Fly.t("Remove the backup password? Scheduled backups stop."))) return;
+      await action(() => Fly.api("/api/backup/offsite", { body: { password: "" } }), "Saved").catch(() => {});
+      loadOffsite();
+    });
+    $("offsite-run").addEventListener("click", async () => {
+      $("offsite-run").disabled = true;
+      await action(() => Fly.api("/api/backup/offsite/run", { method: "POST" }), "Backup saved").catch(() => {});
+      $("offsite-run").disabled = false;
+      loadOffsite();
+    });
+    $("offsite-list").addEventListener("click", async (e) => {
+      const button = e.target.closest("[data-offsite-restore]");
+      if (!button) return;
+      if (!confirm(Fly.t("Restore this backup? The userbot restarts afterwards."))) return;
+      const password = prompt(Fly.t("Backup password (leave empty to use the saved one)")) ?? null;
+      if (password === null) return;
+      await action(() => Fly.api("/api/backup/offsite/restore", { body: { id: Number(button.dataset.offsiteRestore), password } }), "Restoring").catch(() => {});
+    });
+
     $("save-panel-pw").addEventListener("click", () => {
       const pw = $("set-panel-pw").value;
       if (!pw) return;

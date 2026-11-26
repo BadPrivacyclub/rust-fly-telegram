@@ -247,7 +247,7 @@ and can end them. See [docs/RELEASE-SIGNING.md](docs/RELEASE-SIGNING.md) for sig
 | Modules | Enable or disable, configure, grant permissions to sandboxed modules, view source, reload, delete, install from a URL |
 | Logs | Live log stream with a level filter |
 | Anti-delete | Search deleted messages and preview their media |
-| Backups | Download a backup, or restore one and restart |
+| Backups | Download a backup, or restore one and restart; encrypted backups on a schedule in a private Telegram channel, with restore |
 | Settings | Prefixes, language, sudo users, handlers, notifications, panel and master passwords, proxy, updates, restart |
 
 To add another Telegram account, go to Accounts → **Add account**. Press **Ctrl+K**
@@ -362,6 +362,10 @@ keys/                  module signing keys
 - **Backups** never include Telegram sessions or `fly-telegram.env`. A backup of an
   unencrypted database contains your API hash, and the panel warns about
   this.
+- **Encrypted backups in Telegram** (Backups page): the archive is encrypted with its own
+  backup password (Argon2id and XChaCha20-Poly1305), posted to a private channel of the first
+  account, downloaded again and opened to check it, and only the newest copies are kept.
+  Because the whole file is encrypted, it also carries the storage key of sealed settings.
 
 Never share your `*.session` files: anyone who has one can use your account.
 

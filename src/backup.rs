@@ -61,9 +61,23 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 /// I write a new archive under `backups/` and return its path.
 pub fn create_archive(root: &Path) -> Result<PathBuf> {
+    create_archive_with(root, false)
+}
+
+/// An archive of the data folder. `with_key` adds the storage key of sealed database values,
+/// which only an archive encrypted as a whole may carry: with it, the API hash and module
+/// secrets in the database can be read again on another computer.
+pub fn create_archive_with(root: &Path, with_key: bool) -> Result<PathBuf> {
     let dir = root.join(BACKUP_DIR);
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("fly-telegram-backup-{}.tar.gz", timestamp()));
+    // Two archives made within one second get different names instead of one replacing the other.
+    let stamp = timestamp();
+    let mut path = dir.join(format!("fly-telegram-backup-{stamp}.tar.gz"));
+    let mut copy = 1;
+    while path.exists() {
+        copy += 1;
+        path = dir.join(format!("fly-telegram-backup-{stamp}-{copy}.tar.gz"));
+    }
     let file = std::fs::File::create(&path)?;
     let mut builder = tar::Builder::new(GzEncoder::new(file, Compression::default()));
     builder.follow_symlinks(false);
@@ -83,6 +97,10 @@ pub fn create_archive(root: &Path) -> Result<PathBuf> {
             builder.append_path_with_name(&source, entry)?;
         }
     }
+    let key = root.join(config::DATABASE_KEY_FILE);
+    if with_key && key.is_file() {
+        builder.append_path_with_name(&key, config::DATABASE_KEY_FILE)?;
+    }
     builder.into_inner()?.finish()?;
     Ok(path)
 }
@@ -96,6 +114,9 @@ fn is_allowed_entry(path: &Path) -> bool {
         return false;
     }
     let text = path.to_string_lossy().replace('\\', "/");
+    if text == config::DATABASE_KEY_FILE {
+        return true;
+    }
     if INCLUDED
         .iter()
         .any(|entry| *entry != config::MODULES_DIR && text == *entry)
@@ -157,6 +178,13 @@ pub fn restore_archive(root: &Path, archive: &Path) -> Result<Vec<String>> {
             std::fs::copy(&current, keep_dir.join(file))?;
             std::fs::remove_file(&current)?;
         }
+    }
+    let key = root.join(config::DATABASE_KEY_FILE);
+    let restores_key = entries
+        .iter()
+        .any(|(path, _)| path.to_string_lossy() == config::DATABASE_KEY_FILE);
+    if restores_key && key.exists() {
+        std::fs::copy(&key, keep_dir.join(config::DATABASE_KEY_FILE))?;
     }
 
     let mut restored = Vec::new();
@@ -233,6 +261,35 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fly_backup_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("modules")).unwrap();
         dir
+    }
+
+    #[test]
+    fn only_an_archive_with_the_key_carries_it() {
+        let root = temp_root();
+        std::fs::write(root.join("database.json"), r#"{"a":1}"#).unwrap();
+        std::fs::write(root.join(config::DATABASE_KEY_FILE), "key-v1").unwrap();
+
+        let plain = create_archive(&root).unwrap();
+        let keyed = create_archive_with(&root, true).unwrap();
+        std::fs::write(root.join(config::DATABASE_KEY_FILE), "key-v2").unwrap();
+
+        let restored = restore_archive(&root, &plain).unwrap();
+        assert!(!restored
+            .iter()
+            .any(|path| path == config::DATABASE_KEY_FILE));
+        assert_eq!(
+            std::fs::read_to_string(root.join(config::DATABASE_KEY_FILE)).unwrap(),
+            "key-v2"
+        );
+        let restored = restore_archive(&root, &keyed).unwrap();
+        assert!(restored
+            .iter()
+            .any(|path| path == config::DATABASE_KEY_FILE));
+        assert_eq!(
+            std::fs::read_to_string(root.join(config::DATABASE_KEY_FILE)).unwrap(),
+            "key-v1"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

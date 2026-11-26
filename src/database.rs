@@ -21,6 +21,7 @@ const SEALED_KEYS: &[&str] = &[
     db_key::PHONE,
     db_key::PROXY_URL,
     BOT_TOKEN,
+    crate::offsite::PASSWORD_KEY,
 ];
 /// Module settings hold API keys, so I seal the whole group.
 const SEALED_PREFIXES: &[&str] = &["cfg."];

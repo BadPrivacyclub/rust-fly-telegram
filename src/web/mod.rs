@@ -21,6 +21,7 @@ pub mod auth;
 mod device_api;
 mod export_api;
 mod inbox_api;
+mod offsite_api;
 mod recovery_api;
 mod setup;
 
@@ -176,6 +177,13 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
             get(api::settings).post(api::update_settings),
         )
         .route("/api/backup", get(api::download_backup))
+        .route(
+            "/api/backup/offsite",
+            get(offsite_api::overview).post(offsite_api::save),
+        )
+        .route("/api/backup/offsite/run", post(offsite_api::run))
+        .route("/api/backup/offsite/list", get(offsite_api::list))
+        .route("/api/backup/offsite/restore", post(offsite_api::restore))
         .route(
             "/api/restore",
             post(api::restore_backup).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),

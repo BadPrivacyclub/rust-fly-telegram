@@ -4,6 +4,13 @@
 
 ### New
 
+- **Encrypted backups in Telegram** (Backups page): every N hours, or on demand, a backup
+  encrypted with its own password goes to a private channel of the first account. Each copy
+  is downloaded again and opened to check it, older copies beyond the kept number are
+  deleted, and any copy can be restored from the panel. The copy carries the storage key of
+  sealed settings, so a restore on another computer keeps the API hash and module secrets.
+  Sessions are never included.
+
 - **Module events and schedules**: `on_edit`, `on_delete` (with the text anti-delete kept,
   behind the new `telegram.deleted` permission), `on_join`, `on_leave`, `on_reaction`,
   `on_load`, and `on_unload`, next to `on_message`; `M.every` and `M.at` run handlers on a
@@ -126,6 +133,7 @@
 
 ### Changes
 
+- Two backups made within the same second no longer overwrite each other.
 - Modules that watch incoming messages run side by side, so one waiting on the network no
   longer delays the others.
 - Database writes go one at a time and a burst of changes shares one write, so an older

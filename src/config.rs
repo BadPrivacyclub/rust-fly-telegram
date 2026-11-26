@@ -1,6 +1,8 @@
 pub const DATABASE_FILE: &str = "database.json";
 
 pub const DATABASE_ENCRYPTED_FILE: &str = "database.json.enc";
+/// The storage key of sealed database values.
+pub const DATABASE_KEY_FILE: &str = "database.json.key";
 
 pub const DEFAULT_SESSION_FILE: &str = "fly-telegram.session";
 
