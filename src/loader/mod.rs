@@ -19,6 +19,7 @@ pub mod installer;
 pub mod manifest;
 pub mod meta;
 pub mod quota;
+pub mod scope;
 
 use ed25519_dalek::VerifyingKey;
 
@@ -418,6 +419,7 @@ impl Loader {
         &self,
         name: &str,
         permissions: Vec<String>,
+        scopes: std::collections::BTreeMap<String, scope::Scope>,
         confirm_risky: bool,
     ) -> Result<()> {
         let (file_name, current, trusted) = self
@@ -466,6 +468,7 @@ impl Loader {
                 &source,
             )
         };
+        manifest.scopes = scope::clean(scopes, &permissions);
         manifest.permissions = permissions;
         tokio::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?).await?;
         self.load_file(&module_path).await
@@ -671,12 +674,14 @@ impl Loader {
                 .filter(|(name, module)| {
                     module.has_on_message
                         && !disabled.contains(name)
-                        && (module.manifest.trusted
-                            || module
-                                .manifest
-                                .permissions
-                                .iter()
-                                .any(|p| p == READ_PERMISSION))
+                        && scope::allows(
+                            module.manifest.trusted,
+                            &module.manifest.permissions,
+                            &module.manifest.scopes,
+                            READ_PERMISSION,
+                            &account.session_file,
+                            Some(msg.peer_id().bot_api_dialog_id()),
+                        )
                 })
                 .filter_map(|(_, module)| {
                     module
@@ -1210,22 +1215,53 @@ mod tests {
         let (loader, dir) = loader_with(&[("x.lua", "return { commands = {} }")]).await;
         let risky = vec!["network".to_string(), "secrets".to_string()];
         let error = loader
-            .set_permissions("x", risky.clone(), false)
+            .set_permissions("x", risky.clone(), Default::default(), false)
             .await
             .unwrap_err();
         assert!(error.downcast_ref::<manifest::RiskyPermissions>().is_some());
         loader
-            .set_permissions("x", vec!["network".into()], false)
+            .set_permissions("x", vec!["network".into()], Default::default(), false)
             .await
             .unwrap();
         loader
-            .set_permissions("x", risky.clone(), true)
+            .set_permissions("x", risky.clone(), Default::default(), true)
             .await
             .unwrap();
         loader
-            .set_permissions("x", risky, false)
+            .set_permissions("x", risky, Default::default(), false)
             .await
             .expect("nothing new to confirm");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn permission_scopes_are_saved_with_the_manifest() {
+        let (loader, dir) = loader_with(&[("x.lua", "return { commands = {} }")]).await;
+        let scopes = std::collections::BTreeMap::from([
+            (
+                "network".to_string(),
+                scope::Scope {
+                    hosts: vec!["API.example.com".into()],
+                    ..Default::default()
+                },
+            ),
+            (
+                "shell".to_string(),
+                scope::Scope {
+                    chats: vec![1],
+                    ..Default::default()
+                },
+            ),
+        ]);
+        loader
+            .set_permissions("x", vec!["network".into()], scopes, false)
+            .await
+            .unwrap();
+        let modules = loader.modules.read().await;
+        let manifest = &modules["x"].manifest;
+        assert_eq!(manifest.scopes.len(), 1);
+        assert_eq!(manifest.scopes["network"].hosts, vec!["api.example.com"]);
+        drop(modules);
         let _ = std::fs::remove_dir_all(dir);
     }
 

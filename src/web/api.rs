@@ -235,6 +235,8 @@ pub async fn set_module_config(
 pub struct PermissionsRequest {
     permissions: Vec<String>,
     #[serde(default)]
+    scopes: std::collections::BTreeMap<String, crate::loader::scope::Scope>,
+    #[serde(default)]
     confirm_risky: bool,
 }
 
@@ -245,7 +247,7 @@ pub async fn set_module_permissions(
 ) -> Response {
     let loader = try_loader!(state);
     let result = loader
-        .set_permissions(&name, body.permissions, body.confirm_risky)
+        .set_permissions(&name, body.permissions, body.scopes, body.confirm_risky)
         .await;
     match result {
         Ok(()) => api_ok(),

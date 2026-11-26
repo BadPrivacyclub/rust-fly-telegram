@@ -8,6 +8,8 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::scope::Scope;
+
 /// The permissions I let a module request. `shell`, `secrets`, `modules.install`, and
 /// `core.admin` effectively grant control of the host or the account.
 pub const KNOWN_PERMISSIONS: &[&str] = &[
@@ -108,6 +110,9 @@ pub struct ModuleManifest {
     pub commands: Vec<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// Limits of granted permissions to some chats, hosts, or accounts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scopes: BTreeMap<String, Scope>,
     #[serde(default)]
     pub dependencies: Vec<String>,
     #[serde(default)]
@@ -129,6 +134,7 @@ pub struct ModuleInfo {
     pub description: String,
     pub commands: Vec<String>,
     pub permissions: Vec<String>,
+    pub scopes: BTreeMap<String, Scope>,
     pub trusted: bool,
     pub audit: Vec<String>,
 }
@@ -141,6 +147,7 @@ impl ModuleManifest {
             description: String::new(),
             commands,
             permissions: Vec::new(),
+            scopes: BTreeMap::new(),
             dependencies: required_modules(source),
             source: None,
             checksum: None,
@@ -226,6 +233,7 @@ pub async fn write_generated_manifest(
             .to_string(),
         commands: module_commands(source),
         permissions: Vec::new(),
+        scopes: BTreeMap::new(),
         dependencies: required_modules(source),
         source: source_url,
         checksum: None,
@@ -269,6 +277,7 @@ pub fn module_info(
         description: manifest.description.clone(),
         commands: command_names,
         permissions: manifest.permissions.clone(),
+        scopes: manifest.scopes.clone(),
         trusted: manifest.trusted,
         audit: audit_source(source),
     }
@@ -700,6 +709,7 @@ mod tests {
             description: String::new(),
             commands: Vec::new(),
             permissions: vec!["shell".to_string()],
+            scopes: BTreeMap::new(),
             dependencies: Vec::new(),
             source: None,
             checksum: None,

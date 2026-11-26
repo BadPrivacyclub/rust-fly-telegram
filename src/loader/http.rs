@@ -27,10 +27,13 @@ static PROXY: Mutex<String> = Mutex::new(String::new());
 /// Clients built for the proxy in use, one per [`Reach`]. Rebuilt only when the proxy changes.
 static CLIENT: Mutex<Option<(String, reqwest::Client)>> = Mutex::new(None);
 static PUBLIC_CLIENT: Mutex<Option<(String, reqwest::Client)>> = Mutex::new(None);
+/// Clients for [`Reach::Hosts`], by proxy and host list.
+static HOST_CLIENTS: Mutex<Option<std::collections::HashMap<String, reqwest::Client>>> =
+    Mutex::new(None);
 const MAX_REDIRECTS: usize = 10;
 
 /// Which addresses a request may reach.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Reach {
     /// Public internet addresses only: no loopback, private, link-local, or other special
     /// ranges. Used for sandboxed modules, so the `network` permission does not open the
@@ -39,15 +42,37 @@ pub enum Reach {
     Public,
     /// Any address, for trusted modules and the core.
     Any,
+    /// Public addresses of these hosts only (patterns as in [`super::scope::host_matches`]),
+    /// for a sandboxed module whose `network` permission has a host scope.
+    Hosts(Arc<[String]>),
 }
 
 impl Reach {
-    pub fn for_module(trusted: bool) -> Self {
-        if trusted {
-            Self::Any
-        } else {
-            Self::Public
+    /// Refuses a URL this reach does not cover, before connecting.
+    fn check(&self, url: &reqwest::Url) -> anyhow::Result<()> {
+        match self {
+            Reach::Any => Ok(()),
+            Reach::Public => check_public_host(url),
+            Reach::Hosts(hosts) => {
+                check_public_host(url)?;
+                check_listed_host(hosts, url)
+            }
         }
+    }
+}
+
+fn check_listed_host(hosts: &[String], url: &reqwest::Url) -> anyhow::Result<()> {
+    let host = url.host_str().unwrap_or_default();
+    if hosts
+        .iter()
+        .any(|pattern| super::scope::host_matches(pattern, host))
+    {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{host} is not among the hosts this module may reach: {}",
+            hosts.join(", ")
+        )
     }
 }
 
@@ -136,11 +161,22 @@ pub fn set_proxy(url: &str) {
     *PROXY.lock().unwrap_or_else(|e| e.into_inner()) = url.trim().to_string();
 }
 
-fn client(reach: Reach) -> anyhow::Result<reqwest::Client> {
+fn client(reach: &Reach) -> anyhow::Result<reqwest::Client> {
     let proxy = PROXY.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Reach::Hosts(hosts) = reach {
+        let key = format!("{proxy}\n{}", hosts.join("\n"));
+        let mut cached = HOST_CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = cached.get_or_insert_with(Default::default);
+        if let Some(client) = map.get(&key) {
+            return Ok(client.clone());
+        }
+        let client = build_client(reach, &proxy)?;
+        map.insert(key, client.clone());
+        return Ok(client);
+    }
     let slot = match reach {
         Reach::Any => &CLIENT,
-        Reach::Public => &PUBLIC_CLIENT,
+        _ => &PUBLIC_CLIENT,
     };
     let mut cached = slot.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((cached_proxy, client)) = cached.as_ref() {
@@ -148,32 +184,37 @@ fn client(reach: Reach) -> anyhow::Result<reqwest::Client> {
             return Ok(client.clone());
         }
     }
+    let client = build_client(reach, &proxy)?;
+    *cached = Some((proxy, client.clone()));
+    Ok(client)
+}
+
+fn build_client(reach: &Reach, proxy: &str) -> anyhow::Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(10));
     builder = match reach {
         Reach::Any => builder.redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS)),
-        Reach::Public => builder.dns_resolver(Arc::new(PublicResolver)).redirect(
-            reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= MAX_REDIRECTS {
-                    attempt.error("too many redirects")
-                } else if let Err(error) = check_public_host(attempt.url()) {
-                    attempt.error(error.to_string())
-                } else {
-                    attempt.follow()
-                }
-            }),
-        ),
+        restricted => {
+            let reach = restricted.clone();
+            builder.dns_resolver(Arc::new(PublicResolver)).redirect(
+                reqwest::redirect::Policy::custom(move |attempt| {
+                    if attempt.previous().len() >= MAX_REDIRECTS {
+                        attempt.error("too many redirects")
+                    } else if let Err(error) = reach.check(attempt.url()) {
+                        attempt.error(error.to_string())
+                    } else {
+                        attempt.follow()
+                    }
+                }),
+            )
+        }
     };
     if !proxy.is_empty() {
-        let route = reqwest::Proxy::all(&proxy).context("the proxy URL is invalid")?;
+        let route = reqwest::Proxy::all(proxy).context("the proxy URL is invalid")?;
         builder = builder.proxy(route);
     }
-    let client = builder
-        .build()
-        .context("could not set up the HTTP client")?;
-    *cached = Some((proxy, client.clone()));
-    Ok(client)
+    builder.build().context("could not set up the HTTP client")
 }
 
 /// One request as a module describes it to me.
@@ -262,9 +303,7 @@ pub fn check_url(url: &str) -> anyhow::Result<reqwest::Url> {
 
 pub async fn send(request: Request) -> anyhow::Result<Response> {
     let url = check_url(&request.url)?;
-    if request.reach == Reach::Public {
-        check_public_host(&url)?;
-    }
+    request.reach.check(&url)?;
     let host = url.host_str().unwrap_or("server").to_string();
     let method_name = if request.method.trim().is_empty() {
         "GET".to_string()
@@ -279,7 +318,7 @@ pub async fn send(request: Request) -> anyhow::Result<Response> {
         .clamp(1, MAX_TIMEOUT);
     let limit = request.limit.unwrap_or(TEXT_LIMIT);
 
-    let mut builder = client(request.reach)?
+    let mut builder = client(&request.reach)?
         .request(method, url)
         .timeout(Duration::from_secs(timeout));
     for (name, value) in request.headers {
@@ -636,6 +675,17 @@ mod live_tests {
             );
         }
         assert!(check_public_host(&check_url("https://example.com/").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn host_scopes_limit_where_a_module_may_connect() {
+        let reach = Reach::Hosts(vec!["api.example.com".into(), "*.cdn.org".into()].into());
+        let check = |url: &str| reach.check(&check_url(url).unwrap());
+        assert!(check("https://api.example.com/v1").is_ok());
+        assert!(check("https://img.cdn.org/a.png").is_ok());
+        let error = check("https://other.example.com/").unwrap_err();
+        assert!(error.to_string().contains("not among the hosts"), "{error}");
+        assert!(check("http://127.0.0.1/").is_err());
     }
 
     #[tokio::test]

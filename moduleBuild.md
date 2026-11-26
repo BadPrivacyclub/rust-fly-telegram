@@ -477,6 +477,26 @@ Every other module runs **sandboxed**:
 Grant permissions in the panel (Modules → Permissions), or edit the manifest. The panel
 also lists the capabilities the source code appears to use.
 
+A granted permission can be limited to some chats, hosts, or accounts. Without a scope it
+applies everywhere:
+
+```json
+{
+  "permissions": ["network", "telegram.read"],
+  "scopes": {
+    "network": { "hosts": ["api.openweathermap.org", "*.githubusercontent.com"] },
+    "telegram.read": { "chats": [-1001234567890], "accounts": ["fly-telegram.session"] }
+  }
+}
+```
+
+- `hosts` (for `network`): requests to other hosts fail, also after a redirect.
+  `*.example.com` covers `example.com` and its subdomains.
+- `chats` (Bot API ids, as in `msg.chat_id`): `on_message` arrives only from these chats,
+  and calls made outside them are refused. A call outside any chat, such as a scheduled
+  one, is outside a scope that names chats.
+- `accounts` (session files): the permission works only on these accounts.
+
 ---
 
 ## Manifests and signing

@@ -193,8 +193,7 @@ async fn run_connection(
         .send(
             Topic::Startup,
             &format!(
-                "<b>{}</b> <code>v{}</code>
-{}",
+                "<b>{}</b> <code>v{}</code>\n{}",
                 i18n::tr(lang, "bot.started"),
                 crate::VERSION,
                 crate::notify::escape_html(&account.name)
@@ -516,10 +515,7 @@ async fn handle_pm_guard(
         }
         let lang = core_settings::language(db).await;
         let html = format!(
-            "<b>{}</b>
-<a href=\"tg://user?id={sender}\">{}</a>{}, <code>{sender}</code>
-
-{}",
+            "<b>{}</b>\n<a href=\"tg://user?id={sender}\">{}</a>{}, <code>{sender}</code>\n\n{}",
             i18n::tr(lang, "bot.pm_new"),
             crate::notify::escape_html(&name),
             crate::notify::escape_html(&username),

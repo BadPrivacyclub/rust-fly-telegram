@@ -4,6 +4,11 @@
 
 ### New
 
+- **Permission scopes** (Modules, Permissions, or `scopes` in the manifest): a permission of
+  a sandboxed module can be limited to some hosts (`network`), chats (`telegram.*`), or
+  accounts. Messages from other chats never reach the module, and requests to other hosts
+  fail, also after a redirect.
+
 - **Inbox** in the panel replaces the control bot: module errors, startup, finished tasks,
   deleted messages, and new private messages with **Allow** and **Block** buttons, with an
   unread counter. `notify.channel` also posts each notification to a private channel of

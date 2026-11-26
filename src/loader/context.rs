@@ -21,6 +21,7 @@ use crate::telegram;
 
 use super::manifest::ModuleManifest;
 use super::quota::{self, Action};
+use super::scope::Scope;
 use super::{http, installer, Account, Loader};
 
 const GROUP_INFO_SCAN_LIMIT: usize = 20_000;
@@ -73,7 +74,10 @@ pub struct Ctx {
     own_user_id: Option<PeerId>,
     module_name: String,
     permissions: Vec<String>,
+    scopes: std::collections::BTreeMap<String, Scope>,
     trusted: bool,
+    /// The chat of the message the call is about, in the Bot API format.
+    chat_id: Option<i64>,
     pub message: Arc<Mutex<Option<Message>>>,
 }
 
@@ -89,20 +93,30 @@ impl Ctx {
             loader,
             module_name: manifest.name.clone(),
             permissions: manifest.permissions.clone(),
+            scopes: manifest.scopes.clone(),
             trusted: manifest.trusted,
+            chat_id: None,
             message: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn with_message(self, msg: Message) -> Self {
         Self {
+            chat_id: Some(msg.peer_id().bot_api_dialog_id()),
             message: Arc::new(Mutex::new(Some(msg))),
             ..self
         }
     }
 
     fn has_permission(&self, permission: &str) -> bool {
-        self.trusted || self.permissions.iter().any(|value| value == permission)
+        super::scope::allows(
+            self.trusted,
+            &self.permissions,
+            &self.scopes,
+            permission,
+            &self.session_file,
+            self.chat_id,
+        )
     }
 
     fn require_permission(&self, permission: &str) -> mlua::Result<()> {
@@ -154,7 +168,15 @@ impl Ctx {
     }
 
     fn reach(&self) -> http::Reach {
-        http::Reach::for_module(self.trusted)
+        if self.trusted {
+            return http::Reach::Any;
+        }
+        match self.scopes.get("network") {
+            Some(scope) if !scope.hosts.is_empty() => {
+                http::Reach::Hosts(scope.hosts.clone().into())
+            }
+            _ => http::Reach::Public,
+        }
     }
 
     fn require_admin(&self) -> mlua::Result<()> {
@@ -562,8 +584,7 @@ impl UserData for Ctx {
         methods.add_async_method("notify", |_, ctx, text: String| async move {
             ctx.throttle(Action::Message)?;
             let html = format!(
-                "<b>{}</b>
-{}",
+                "<b>{}</b>\n{}",
                 crate::notify::escape_html(&ctx.module_name),
                 crate::notify::escape_html(&text)
             );
