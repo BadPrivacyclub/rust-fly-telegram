@@ -822,7 +822,6 @@ mod tests {
             end
             function ctx:cfg_set(k, v)   return v end
             function ctx:help(q)         return "help" end
-            function ctx:inline_help(q)  return false end
             function ctx:message()       return { id = 1, chat_id = -100, text = "", is_group = true, is_private = false, is_saved = false, reply_to_id = 5, custom_emoji = { { id = "5368324170671202286", emoji = "✅" } } } end
             function ctx:replied()
                 if self._scenario == "noreply" then return nil end

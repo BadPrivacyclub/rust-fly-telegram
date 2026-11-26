@@ -288,16 +288,6 @@ impl RuntimeState {
         self.connected.store(any_connected, Ordering::Relaxed);
     }
 
-    /// I return the Telegram user IDs of every connected account; the bot treats them as owners.
-    pub async fn owner_ids(&self) -> Vec<i64> {
-        self.accounts
-            .read()
-            .await
-            .values()
-            .filter_map(|account| account.account_id.parse().ok())
-            .collect()
-    }
-
     pub async fn wait_for_telegram_send(&self) {
         let mut next_send_at = self.telegram_send_at.lock().await;
         let now = Instant::now();

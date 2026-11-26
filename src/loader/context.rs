@@ -559,16 +559,11 @@ impl UserData for Ctx {
                 .await)
         });
 
-        methods.add_async_method("inline_help", |_, ctx, query: Option<String>| async move {
-            inline_help(ctx.clone(), query.unwrap_or_default())
-                .await
-                .map_err(rt)
-        });
-
         methods.add_async_method("notify", |_, ctx, text: String| async move {
             ctx.throttle(Action::Message)?;
             let html = format!(
-                "🧩 <b>{}</b>\n{}",
+                "<b>{}</b>
+{}",
                 crate::notify::escape_html(&ctx.module_name),
                 crate::notify::escape_html(&text)
             );
@@ -1389,34 +1384,6 @@ pub async fn request_restart(ctx: &Ctx) -> anyhow::Result<()> {
 
 /// I send help as an inline result from the control bot, so it has navigation buttons.
 /// I return false when no bot runs or inline mode is off for it.
-async fn inline_help(ctx: Ctx, query: String) -> anyhow::Result<bool> {
-    let Some(username) = ctx.loader.services.notifier.bot_username().await else {
-        return Ok(false);
-    };
-    let Some(msg) = ctx.current_message().await else {
-        return Ok(false);
-    };
-    let peer = telegram::resolve_message_peer(&ctx.client, &msg).await?;
-    let Some(bot) = ctx.client.resolve_username(&username).await? else {
-        return Ok(false);
-    };
-    let Some(bot_ref) = bot.to_ref().await else {
-        return Ok(false);
-    };
-    let mut results = ctx
-        .client
-        .inline_query(bot_ref, format!("help {}", query.trim()).trim())
-        .peer(peer);
-    let Some(result) = results.next().await? else {
-        return Ok(false);
-    };
-    ctx.runtime.wait_for_telegram_send().await;
-    result.send(peer).await?;
-    ctx.runtime.wait_for_telegram_send().await;
-    let _ = msg.delete().await;
-    Ok(true)
-}
-
 async fn purge_from_reply(ctx: Ctx) -> anyhow::Result<usize> {
     let msg = ctx
         .current_message()

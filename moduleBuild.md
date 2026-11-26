@@ -114,7 +114,7 @@ A module returns a table:
 | Field | Required | Purpose |
 |---|---|---|
 | `M.commands` | yes | Command name → handler function name |
-| `M.help` | recommended | Category, description, and per-command usage for `.help`, the bot, and the panel |
+| `M.help` | recommended | Category, description, and per-command usage for `.help` and the panel |
 | `M.config` | optional | Settings schema: validated, and editable with `.cfg` and in the panel |
 | `M.on_message` | optional | Called for every new message (see [events](#events-mon_message)) |
 | `M.meta` | optional | Informational (`name`, `version`); the manifest is authoritative |
@@ -159,7 +159,7 @@ Commands you don't document are still listed.
 
 ## Settings: `M.config`
 
-Declare settings once. Users edit them with `.cfg <module> <key> <value>`, in the bot,
+Declare settings once. Users edit them with `.cfg <module> <key> <value>`
 or in a panel form, and you read them with `ctx:cfg(key)`.
 
 ```lua
@@ -182,7 +182,7 @@ M.config = {
 
 - `ctx:cfg(key)` returns the stored value, or `default` when nothing is stored.
 - `ctx:cfg_set(key, value)` validates and stores the value. `nil` resets it.
-- `secret = true` hides the value in `.cfg`, the bot, and the panel. It can be replaced
+- `secret = true` hides the value in `.cfg` and the panel. It can be replaced
   but never read back.
 - `required = true` means the module cannot work without the value. Until it is set,
   every command of the module answers with a "Setup needed" card that shows the exact
@@ -334,7 +334,7 @@ Paths must be relative and must not contain `..`.
 |---|---|
 | `ctx:runtime_stats()` | `{ version, uptime_seconds, cpu_percent, memory_bytes, updates_seen, commands_seen, errors_seen, modules, accounts, top_commands, os, arch }` |
 | `ctx:now_ms()`, `ctx:sleep(s)`, `ctx:sleep_ms(ms)` | Time helpers (sleeps are capped at one day) |
-| `ctx:notify(text)` | Send a notification through the control bot |
+| `ctx:notify(text)` | Add a notification to the panel inbox |
 | `ctx:sanitize(text)` | Mask secrets (API hash, tokens) in text before you show it |
 | `ctx:env_get(name)` | Read an environment variable (`secrets`) |
 | `ctx:run_process(program, args)` | Run a program without a shell and show its output (`shell`) |
@@ -520,7 +520,7 @@ to the file or these fields drops the module back into the sandbox until you sig
   that must survive a restart.
 
 Handler errors appear in the chat with the module and handler name, go to the log and
-the panel's error counter, and, when enabled, are sent to you through the bot.
+the panel's error counter, and, when enabled, appear in the panel inbox.
 
 ---
 
@@ -678,7 +678,7 @@ end
 ### Notify yourself
 
 ```lua
-ctx:notify("Backup finished")   -- arrives from the control bot
+ctx:notify("Backup finished")   -- appears in the panel inbox
 ```
 
 ### Show text in the user's language

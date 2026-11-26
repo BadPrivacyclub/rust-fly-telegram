@@ -24,7 +24,6 @@ pub async fn state(State(state): State<AppState>) -> Json<Value> {
         "proxy_url": db.get(db_key::PROXY_URL).await,
         "language": core_settings::language(db).await.code(),
         "prefix": core_settings::prefixes(db).await.into_iter().next(),
-        "bot_configured": core_settings::bot_token(db).await.is_some(),
         "panel_password_set": auth::password_is_set(db).await,
         "version": crate::VERSION,
     }))
@@ -34,8 +33,6 @@ pub async fn state(State(state): State<AppState>) -> Json<Value> {
 pub struct PrefsRequest {
     #[serde(default)]
     panel_password: Option<String>,
-    #[serde(default)]
-    bot_token: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
     #[serde(default)]
@@ -47,26 +44,6 @@ pub async fn save_prefs(State(state): State<AppState>, Json(body): Json<PrefsReq
     if let Some(password) = body.panel_password.as_deref().filter(|p| !p.is_empty()) {
         if let Err(error) = auth::set_password(db, Some(password)).await {
             return api_error(StatusCode::BAD_REQUEST, error);
-        }
-    }
-    if let Some(token) = body
-        .bot_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    {
-        match crate::bot::validate_token(token).await {
-            Ok(_) => {
-                if let Err(error) = core_settings::set_bot_token(db, token).await {
-                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
-                }
-            }
-            Err(error) => {
-                return api_error(
-                    StatusCode::BAD_REQUEST,
-                    format!("Telegram rejected the bot token: {error}"),
-                )
-            }
         }
     }
     if let Some(prefix) = body.prefix.as_deref().filter(|p| !p.trim().is_empty()) {

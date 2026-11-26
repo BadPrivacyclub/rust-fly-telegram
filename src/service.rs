@@ -144,7 +144,7 @@ fn install(definition: &Definition, data_dir: &Path) -> Result<()> {
     ensure_env_file(data_dir)?;
     install_platform(definition)?;
     println!(
-        "\nSecrets for the service (FLY_MASTER_PASSWORD, TELOXIDE_TOKEN) go into {}",
+        "\nSecrets for the service (FLY_MASTER_PASSWORD) go into {}",
         data_dir.join(ENV_FILE).display()
     );
     Ok(())
@@ -158,8 +158,7 @@ fn ensure_env_file(data_dir: &Path) -> Result<()> {
     std::fs::write(
         &path,
         "# Environment for the fly-telegram service. Keep this file private.\n\
-         # FLY_MASTER_PASSWORD=change-me\n\
-         # TELOXIDE_TOKEN=123456:ABC\n",
+         # FLY_MASTER_PASSWORD=change-me\n",
     )?;
     #[cfg(unix)]
     {

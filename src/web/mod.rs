@@ -20,11 +20,11 @@ mod api;
 pub mod auth;
 mod device_api;
 mod export_api;
+mod inbox_api;
 mod recovery_api;
 mod setup;
 
 use crate::app::Services;
-use crate::bot::BotManager;
 use crate::client::auth::PendingAuth;
 use crate::loader::Loader;
 
@@ -32,7 +32,6 @@ use crate::loader::Loader;
 pub(crate) struct AppState {
     pub services: Arc<Services>,
     pub loader: Option<Arc<Loader>>,
-    pub bot: Option<Arc<BotManager>>,
     pub pending: Arc<Mutex<Option<PendingAuth>>>,
     pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
@@ -50,7 +49,6 @@ pub async fn run_until_authorized(services: Arc<Services>) -> Result<()> {
     let state = AppState {
         services,
         loader: None,
-        bot: None,
         pending: Arc::new(Mutex::new(None)),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     };
@@ -86,17 +84,12 @@ fn setup_router() -> Router<AppState> {
         .route("/sign_in", post(setup::sign_in))
 }
 
-pub async fn run_dashboard(
-    services: Arc<Services>,
-    loader: Arc<Loader>,
-    bot: Arc<BotManager>,
-) -> Result<()> {
+pub async fn run_dashboard(services: Arc<Services>, loader: Arc<Loader>) -> Result<()> {
     let web = services.config.web.clone();
     let panel_auth = Arc::clone(&services.panel_auth);
     let state = AppState {
         services,
         loader: Some(loader),
-        bot: Some(bot),
         pending: Arc::new(Mutex::new(None)),
         shutdown_tx: Arc::new(Mutex::new(None)),
     };
@@ -151,6 +144,9 @@ fn dashboard_router(state: AppState, panel_auth: Arc<auth::PanelAuth>) -> Router
             "/api/panel-sessions/{id}",
             delete(api::revoke_panel_session),
         )
+        .route("/api/inbox", get(inbox_api::page))
+        .route("/api/inbox/read", post(inbox_api::mark_read))
+        .route("/api/inbox/action", post(inbox_api::act))
         .route("/api/modules", get(api::modules))
         .route("/api/modules/install", post(api::install_module))
         .route("/api/modules/restore", post(api::restore_modules))
@@ -344,7 +340,6 @@ mod tests {
         let state = AppState {
             services,
             loader: None,
-            bot: None,
             pending: Arc::new(Mutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         };
@@ -361,11 +356,9 @@ mod tests {
         crate::bundled::sync(&dir).unwrap();
         let loader = Arc::new(Loader::new(Arc::clone(&services), &dir).await.unwrap());
         loader.load_all().await.unwrap();
-        let bot = BotManager::new(Arc::clone(&loader));
         let state = AppState {
             services: Arc::clone(&services),
             loader: Some(loader),
-            bot: Some(bot),
             pending: Arc::new(Mutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
         };
@@ -472,11 +465,9 @@ mod tests {
             .await;
         let token = services.panel_auth.issue_startup_token().await;
         println!("PREVIEW http://127.0.0.1:{port}/auth#t={token}");
-        let bot = BotManager::new(Arc::clone(&loader));
         let state = AppState {
             services: Arc::clone(&services),
             loader: Some(loader),
-            bot: Some(bot),
             pending: Arc::new(Mutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
         };
@@ -665,6 +656,52 @@ mod tests {
             .await;
         assert_eq!(right.status_code(), 200);
         assert!(right.headers().get("set-cookie").is_some());
+    }
+
+    #[tokio::test]
+    async fn inbox_lists_events_and_runs_actions_once() {
+        let (server, services) = dashboard_server().await;
+        let cookie = login(&server, &services).await;
+        services
+            .notifier
+            .send_with_actions(
+                crate::notify::Topic::PmGuard,
+                "<b>New PM</b> from <code>42</code>",
+                vec![
+                    crate::notify::Action::new("pm.allow:42", "Allow"),
+                    crate::notify::Action::new("pm.block:42", "Block").danger(),
+                ],
+            )
+            .await;
+        let page: serde_json::Value = local(&server, "GET", "/api/inbox")
+            .add_header("cookie", cookie.clone())
+            .await
+            .json();
+        assert_eq!(page["unread"], 1);
+        let event = &page["events"][0];
+        assert_eq!(event["text"], "New PM from 42");
+        let id = event["id"].as_u64().unwrap();
+
+        let act = |action: &'static str| {
+            local(&server, "POST", "/api/inbox/action")
+                .add_header("cookie", cookie.clone())
+                .json(&json!({ "event": id, "action": action }))
+        };
+        assert_eq!(act("pm.allow:42").await.status_code(), 200);
+        assert!(services.db.csv_contains("pmguard.allow", "42").await);
+        assert_eq!(act("pm.block:42").await.status_code(), 409);
+
+        let res = local(&server, "POST", "/api/inbox/read")
+            .add_header("cookie", cookie.clone())
+            .json(&json!({ "up_to": id }))
+            .await;
+        assert_eq!(res.status_code(), 200);
+        let page: serde_json::Value = local(&server, "GET", "/api/inbox")
+            .add_header("cookie", cookie)
+            .await
+            .json();
+        assert_eq!(page["unread"], 0);
+        assert!(page["events"][0]["resolved"].is_string());
     }
 
     #[tokio::test]

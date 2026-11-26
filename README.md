@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A fast Telegram userbot written in Rust, with hot-reloaded Lua modules, a local web
-panel, and a control bot inside Telegram. One executable, no runtime dependencies.
+panel. One executable, no runtime dependencies.
 
 - **28 built-in modules**: notes, reminders, keyword auto-replies, AI (OpenAI, Anthropic,
   Gemini), group moderation, PM guard, anti-delete, weather, currency, QR codes, a calculator,
@@ -21,8 +21,9 @@ panel, and a control bot inside Telegram. One executable, no runtime dependencie
   with settings forms, live logs, the deleted-message archive, backups, and settings.
   It offers 12 color themes and visual effects, has a Ctrl+K command palette, and works
   in English and Russian.
-- **Control bot**: a menu in Telegram with status, modules, settings, and errors, plus
-  notifications. New private messages arrive with **Allow** and **Block** buttons.
+- **Inbox**: notifications in the panel: module errors, startup, finished tasks, deleted
+  messages, and new private messages with **Allow** and **Block** buttons. A copy can go
+  to a private channel of your account, so it reaches your phone.
 - **Download and run**: unpack the archive and double-click; the setup wizard opens in
   your browser. One-line installers, a background service with one command, and
   self-update from GitHub Releases.
@@ -66,9 +67,8 @@ fly-telegram --data-dir ~/fly-telegram
 Open **http://127.0.0.1:8080**. The wizard asks for:
 
 1. A **panel password**, to protect the web panel.
-2. An optional **control bot** token from [@BotFather](https://t.me/BotFather).
-3. Your **Telegram API keys** from [my.telegram.org/apps](https://my.telegram.org/apps).
-4. Your **phone number**, the login code, and your 2FA password if you use one.
+2. Your **Telegram API keys** from [my.telegram.org/apps](https://my.telegram.org/apps).
+3. Your **phone number**, the login code, and your 2FA password if you use one.
 
 After you sign in, the panel opens automatically.
 
@@ -225,22 +225,6 @@ modules, change settings, reveal your notes and snippets, or use your AI API key
 
 ---
 
-## Control bot
-
-Create a bot with [@BotFather](https://t.me/BotFather) and add its token in the wizard or
-under Settings → Control bot. Then press **Start** in your bot. It answers only the
-accounts logged into your userbot.
-
-| | |
-|---|---|
-| `/start` | Menu: status, modules, settings, recent errors, web panel link, language, restart |
-| Notifications | Module errors, startup, new private messages (with **Allow** and **Block** buttons), deleted messages (off by default) |
-| Inline help | Send `/setinline` to BotFather and `.help` turns into an interactive message with buttons |
-
-You can switch each notification type on or off in the bot or in the panel.
-
----
-
 ## Web panel
 
 The panel listens on `127.0.0.1:8080` and accepts only requests addressed to `localhost`,
@@ -255,6 +239,7 @@ and can end them. See [docs/RELEASE-SIGNING.md](docs/RELEASE-SIGNING.md) for sig
 
 | Page | What you can do |
 |---|---|
+| Inbox | Notifications, with buttons for questions such as allowing a new private chat |
 | Overview | Uptime, commands, memory, a 60-minute activity chart, top commands, accounts, a getting-started checklist |
 | Accounts | Select one or several accounts, live chat counts, bulk actions, the smart cleanup wizard, profile editing |
 | Automations | Visual editor for all rule types, per-account targeting, enable/disable |
@@ -263,7 +248,7 @@ and can end them. See [docs/RELEASE-SIGNING.md](docs/RELEASE-SIGNING.md) for sig
 | Logs | Live log stream with a level filter |
 | Anti-delete | Search deleted messages and preview their media |
 | Backups | Download a backup, or restore one and restart |
-| Settings | Prefixes, language, sudo users, bot token, handlers, notifications, panel and master passwords, proxy, updates, restart |
+| Settings | Prefixes, language, sudo users, handlers, notifications, panel and master passwords, proxy, updates, restart |
 
 To add another Telegram account, go to Accounts → **Add account**. Press **Ctrl+K**
 anywhere for the command palette, and use the 🎨 button for themes, accent color, and
@@ -311,7 +296,7 @@ is reachable (a proxy is needed where Telegram is blocked), and that optional to
 
 ## Configuration
 
-Most settings live in the database and you change them from Telegram, the bot, or the panel.
+Most settings live in the database and you change them from Telegram or the panel.
 Process-level options come from, highest priority first:
 
 1. **CLI flags**
@@ -329,7 +314,6 @@ Process-level options come from, highest priority first:
 | `--config <path>` | | `config.toml` | Alternative config file |
 | | `FLY_LOG` / `RUST_LOG` | `info` | Log level, e.g. `debug` or `fly_telegram=debug` |
 | | `FLY_MASTER_PASSWORD` | | Unlock or enable encryption at rest |
-| | `TELOXIDE_TOKEN` | | Bot token (the token saved in the panel takes precedence) |
 
 | Command | |
 |---|---|
@@ -376,7 +360,7 @@ keys/                  module signing keys
   the database, the default session (on shutdown), and the anti-delete archive with
   Argon2id and XChaCha20-Poly1305.
 - **Backups** never include Telegram sessions or `fly-telegram.env`. A backup of an
-  unencrypted database contains your API hash and bot token, and the panel warns about
+  unencrypted database contains your API hash, and the panel warns about
   this.
 
 Never share your `*.session` files: anyone who has one can use your account.
@@ -445,7 +429,6 @@ them with checksums.
 | `src/app.rs` | Shared services |
 | `src/client/` | Telegram connections, update loop, built-in handlers |
 | `src/loader/` | Lua runtime, `ctx` API, `ui` library, manifests, help and settings schema |
-| `src/bot/` | Control bot |
 | `src/web/` | Web panel, setup wizard, API, authentication |
 | `src/bundled.rs`, `build.rs` | Built-in modules embedded in the binary |
 | `src/backup.rs`, `src/updater.rs`, `src/restart.rs` | Backups, self-update, in-place restart |

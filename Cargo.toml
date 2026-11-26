@@ -19,8 +19,6 @@ grammers-client   = { version = "0.9", features = ["fs", "markdown"] }
 grammers-session  = "0.9"
 grammers-mtsender = { version = "0.9", features = ["proxy"] }
 
-teloxide = { version = "0.17", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
-
 mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send", "serde"] }
 
 axum       = { version = "0.8", features = ["multipart"] }
@@ -40,7 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow    = "1"
 thiserror = "2"
 uuid      = { version = "1", features = ["v4"] }
-reqwest   = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart", "socks"] }
+reqwest   = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart", "socks", "json"] }
 argon2    = "0.5"
 base64    = "0.22"
 chacha20poly1305 = "0.10"

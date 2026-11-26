@@ -21,6 +21,7 @@ pub mod key {
     pub const NOTIFY_ANTIDELETE: &str = "notify.antidelete";
     pub const NOTIFY_MODULES: &str = "notify.modules";
     pub const NOTIFY_JOBS: &str = "notify.jobs";
+    pub const NOTIFY_CHANNEL: &str = "notify.channel";
 }
 
 pub const DEFAULT_PREFIX: &str = ".";
@@ -48,6 +49,7 @@ pub const TOGGLES: &[(&str, &str, bool)] = &[
     (key::NOTIFY_STARTUP, "set.notify_startup", true),
     (key::NOTIFY_ANTIDELETE, "set.notify_antidelete", false),
     (key::NOTIFY_JOBS, "set.notify_jobs", true),
+    (key::NOTIFY_CHANNEL, "set.notify_channel", false),
 ];
 
 pub fn toggle_default(db_key: &str) -> Option<bool> {
@@ -215,32 +217,15 @@ pub async fn flag(db: &Database, key: &str, default: bool) -> bool {
     db.get(key).await.as_bool().unwrap_or(default)
 }
 
-pub async fn set_bot_token(db: &Database, token: &str) -> Result<()> {
-    db.set(key::BOT_TOKEN, Value::String(token.to_string()))
-        .await?;
-    db.remove(key::BOT_REMOVED).await
-}
-
-pub async fn remove_bot_token(db: &Database) -> Result<()> {
-    db.remove(key::BOT_TOKEN).await?;
-    db.set(key::BOT_REMOVED, Value::Bool(true)).await
-}
-
-pub async fn bot_token(db: &Database) -> Option<String> {
-    if flag(db, key::BOT_REMOVED, false).await {
-        return None;
+/// Removes the token of the control bot, which is gone, from databases written before.
+pub async fn forget_bot_token(db: &Database) -> Result<()> {
+    if !db.get(key::BOT_TOKEN).await.is_null() {
+        db.remove(key::BOT_TOKEN).await?;
     }
-    db.get(key::BOT_TOKEN)
-        .await
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            std::env::var(crate::config::env_key::TELOXIDE_TOKEN)
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
+    if !db.get(key::BOT_REMOVED).await.is_null() {
+        db.remove(key::BOT_REMOVED).await?;
+    }
+    Ok(())
 }
 
 fn string_list(value: &Value) -> Vec<String> {
@@ -311,16 +296,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_removed_bot_stays_removed_until_a_new_token_is_saved() {
+    async fn the_old_bot_token_is_forgotten() {
         let path = std::env::temp_dir().join(format!("fly_bot_{}.json", uuid::Uuid::new_v4()));
         let db = Database::load(&path).await.unwrap();
-        set_bot_token(&db, "1:token").await.unwrap();
-        assert_eq!(bot_token(&db).await.as_deref(), Some("1:token"));
-        remove_bot_token(&db).await.unwrap();
-        assert_eq!(bot_token(&db).await, None);
-        set_bot_token(&db, "2:token").await.unwrap();
-        assert_eq!(bot_token(&db).await.as_deref(), Some("2:token"));
-        let _ = tokio::fs::remove_file(path).await;
+        db.set(key::BOT_TOKEN, Value::String("1:token".into()))
+            .await
+            .unwrap();
+        db.set(key::BOT_REMOVED, Value::Bool(true)).await.unwrap();
+        forget_bot_token(&db).await.unwrap();
+        assert!(db.get(key::BOT_TOKEN).await.is_null());
+        assert!(db.get(key::BOT_REMOVED).await.is_null());
+        let _ = tokio::fs::remove_file(&path).await;
+        let _ = tokio::fs::remove_file(path.with_extension("json.key")).await;
     }
 
     #[test]

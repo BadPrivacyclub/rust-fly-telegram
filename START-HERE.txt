@@ -6,7 +6,7 @@ fly-telegram: quick start
    macOS / Linux: open a terminal in this folder and run ./fly-telegram
 
 2. The setup wizard opens in your browser (http://127.0.0.1:8080).
-   Follow the steps: panel password, optional control bot, Telegram API keys
+   Follow the steps: panel password, Telegram API keys
    from https://my.telegram.org/apps, then your phone number and login code.
 
 3. Send .help in any Telegram chat.
@@ -27,7 +27,7 @@ fly-telegram: быстрый старт
    macOS / Linux: откройте терминал в этой папке и выполните ./fly-telegram
 
 2. В браузере откроется мастер настройки (http://127.0.0.1:8080).
-   Пройдите шаги: пароль панели, бот (необязательно), API-ключи Telegram
+   Пройдите шаги: пароль панели, API-ключи Telegram
    с https://my.telegram.org/apps, затем номер телефона и код входа.
 
 3. Отправьте .help в любом чате Telegram.

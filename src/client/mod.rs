@@ -6,7 +6,7 @@ use grammers_client::update::{Message, MessageDeletion, Update};
 use grammers_session::types::PeerKind;
 use rand::Rng;
 use tokio::sync::{Mutex, OnceCell};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub mod auth;
 
@@ -26,7 +26,6 @@ const MESSAGE_CACHE_LIMIT: usize = 1000;
 pub struct RunOptions {
     pub services: Arc<Services>,
     pub loader: Arc<Loader>,
-    pub bot: Arc<crate::bot::BotManager>,
     /// I use the browser setup wizard instead of terminal prompts when no session exists.
     pub browser_setup: bool,
 }
@@ -35,7 +34,6 @@ pub async fn run(options: RunOptions) -> Result<()> {
     let RunOptions {
         services,
         loader,
-        bot,
         browser_setup,
     } = options;
     let db = Arc::clone(&services.db);
@@ -55,16 +53,11 @@ pub async fn run(options: RunOptions) -> Result<()> {
             Err(error) => return Err(error),
         },
     };
-    // The setup wizard may have stored a bot token, so I pick it up.
-    if core_settings::bot_token(&db).await.is_some() && services.notifier.bot().await.is_none() {
-        bot.restart().await;
-    }
-
     if services.config.web.enabled {
         let services_web = Arc::clone(&services);
         let loader_web = Arc::clone(&loader);
         tokio::spawn(async move {
-            if let Err(e) = crate::web::run_dashboard(services_web, loader_web, bot).await {
+            if let Err(e) = crate::web::run_dashboard(services_web, loader_web).await {
                 error!("web panel stopped: {e}");
             }
         });
@@ -187,6 +180,7 @@ async fn run_connection(
         }
     }
     services.accounts.register(handle).await;
+    services.notifier.set_channel_client(&client).await;
     info!(
         "userbot account '{}' connected, starting update loop",
         account.name
@@ -199,7 +193,8 @@ async fn run_connection(
         .send(
             Topic::Startup,
             &format!(
-                "✈️ <b>{}</b> <code>v{}</code>\n👤 {}",
+                "<b>{}</b> <code>v{}</code>
+{}",
                 i18n::tr(lang, "bot.started"),
                 crate::VERSION,
                 crate::notify::escape_html(&account.name)
@@ -499,7 +494,7 @@ async fn handle_pm_guard(
     telegram::msg_respond(runtime, msg, &text).await?;
     db.set(key, serde_json::Value::Bool(true)).await?;
 
-    // I let the owner decide from the bot without opening the chat.
+    // The owner decides from the panel inbox without opening the chat.
     if services.notifier.enabled(Topic::PmGuard).await {
         let name = msg
             .sender()
@@ -521,7 +516,10 @@ async fn handle_pm_guard(
         }
         let lang = core_settings::language(db).await;
         let html = format!(
-            "🛡 <b>{}</b>\n👤 <a href=\"tg://user?id={sender}\">{}</a>{} · <code>{sender}</code>\n\n{}",
+            "<b>{}</b>
+<a href=\"tg://user?id={sender}\">{}</a>{}, <code>{sender}</code>
+
+{}",
             i18n::tr(lang, "bot.pm_new"),
             crate::notify::escape_html(&name),
             crate::notify::escape_html(&username),
@@ -529,10 +527,10 @@ async fn handle_pm_guard(
         );
         services
             .notifier
-            .send_with_keyboard(
+            .send_with_actions(
                 Topic::PmGuard,
                 &html,
-                Some(crate::bot::pm_keyboard(lang, sender_id.bot_api_dialog_id())),
+                pm_actions(lang, sender_id.bot_api_dialog_id()),
             )
             .await;
     }
@@ -681,4 +679,47 @@ async fn optional_db_string(db: &Database, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn pm_actions(lang: crate::i18n::Lang, user_id: i64) -> Vec<crate::notify::Action> {
+    vec![
+        crate::notify::Action::new(
+            format!("pm.allow:{user_id}"),
+            i18n::tr(lang, "bot.pm_allow"),
+        ),
+        crate::notify::Action::new(format!("pm.block:{user_id}"), i18n::tr(lang, "bot.pm_deny"))
+            .danger(),
+    ]
+}
+
+/// Allows or blocks a private chat that PM guard holds, and tells an allowed sender so.
+pub async fn decide_pm(services: &Services, user_id: i64, allow: bool) -> Result<()> {
+    let db = &services.db;
+    let id = user_id.to_string();
+    let (add_to, remove_from) = if allow {
+        ("pmguard.allow", "pmguard.deny")
+    } else {
+        ("pmguard.deny", "pmguard.allow")
+    };
+    core_settings::csv_update(db, add_to, &id, true).await?;
+    core_settings::csv_update(db, remove_from, &id, false).await?;
+    db.remove(&format!("pmguard.challenge_seen.{id}")).await?;
+    let pending = services.notifier.pm_pending.lock().await.remove(&user_id);
+    if let (true, Some(pending)) = (allow, pending) {
+        let text = db
+            .get("pmguard.approve_text")
+            .await
+            .as_str()
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| "Approved. I'll reply soon.".to_string());
+        if let Some(peer) = pending.peer.to_ref() {
+            if let Err(error) =
+                telegram::send_markdown(&pending.client, &services.runtime, peer, &text).await
+            {
+                warn!("could not notify approved user {}: {error}", pending.name);
+            }
+        }
+    }
+    Ok(())
 }

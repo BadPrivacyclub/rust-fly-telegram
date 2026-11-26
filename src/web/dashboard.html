@@ -44,6 +44,7 @@
         <div>fly-telegram<small id="version">v-</small></div>
       </div>
       <button class="nav-item" data-page="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span data-i18n="Overview">Overview</span></button>
+      <button class="nav-item" data-page="inbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span data-i18n="Inbox">Inbox</span><span class="nav-badge hidden" id="inbox-badge">0</span></button>
       <button class="nav-item" data-page="accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.5 5.2"/></svg><span data-i18n="Accounts">Accounts</span></button>
       <button class="nav-item" data-page="export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg><span data-i18n="Export">Export</span></button>
       <button class="nav-item" data-page="recovery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/></svg><span data-i18n="Session recovery">Session recovery</span><span class="nav-badge hidden" id="recovery-badge">0</span></button>
@@ -56,7 +57,6 @@
       <button class="nav-item" data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span data-i18n="Settings">Settings</span></button>
 
       <div class="sidebar-footer">
-        <div class="row small muted" id="bot-status"></div>
         <div class="row between">
           <div class="tabs">
             <button class="tab" data-lang="en" type="button">EN</button>
@@ -70,6 +70,14 @@
     </nav>
 
     <main class="main">
+      <section class="page hidden" id="page-inbox">
+        <div class="page-head">
+          <div><h1 data-i18n="Inbox">Inbox</h1><p class="muted" data-i18n="Notifications and questions that need your answer.">Notifications and questions that need your answer.</p></div>
+          <div class="row"><button class="btn btn-sm" id="inbox-read-all" data-i18n="Mark all as read">Mark all as read</button></div>
+        </div>
+        <div class="card"><div class="stack" id="inbox-list"></div></div>
+      </section>
+
       <section class="page" id="page-overview">
         <div class="page-head">
           <div>
@@ -255,7 +263,7 @@
           <div class="card stack">
             <h2 data-i18n="Download backup">Download backup</h2>
             <p class="muted" style="margin:0" data-i18n="Database, settings, and modules. Telegram sessions are never included.">Database, settings, and modules. Telegram sessions are never included.</p>
-            <div id="backup-warning" class="alert warn hidden" data-i18n="The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.">The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.</div>
+            <div id="backup-warning" class="alert warn hidden" data-i18n="The database is not encrypted, so the backup contains your API hash in plain text. Set a master password to encrypt it.">The database is not encrypted, so the backup contains your API hash in plain text. Set a master password to encrypt it.</div>
             <div><a class="btn btn-primary" href="/api/backup" download data-i18n="Download backup">Download backup</a></div>
             <p class="small faint" style="margin:0" data-i18n="Tip: .backup in Telegram sends a backup to Saved Messages.">Tip: .backup in Telegram sends a backup to Saved Messages.</p>
           </div>
@@ -280,7 +288,7 @@
                 <span class="hint" data-i18n="Separate several prefixes with spaces">Separate several prefixes with spaces</span>
               </div>
               <div class="field">
-                <label for="set-language" data-i18n="Bot and message language">Bot and message language</label>
+                <label for="set-language" data-i18n="Message language">Message language</label>
                 <select class="input" id="set-language"><option value="en">English</option><option value="ru">Русский</option></select>
               </div>
               <div class="field">
@@ -293,21 +301,6 @@
           </div>
 
           <div class="card">
-            <div class="card-head"><h2 data-i18n="Control bot">Control bot</h2><span id="bot-badge"></span></div>
-            <div class="stack">
-              <div class="field">
-                <label for="set-bot" data-i18n="Bot token">Bot token</label>
-                <input class="input mono" id="set-bot" placeholder="123456789:AA…" autocomplete="off">
-                <span class="hint" data-i18n="Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.">Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.</span>
-              </div>
-              <div class="row">
-                <button class="btn btn-primary" id="save-bot" data-i18n="Save">Save</button>
-                <button class="btn btn-danger" id="remove-bot" data-i18n="Remove bot">Remove bot</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
             <div class="card-head"><h2 data-i18n="Handlers">Handlers</h2></div>
             <div id="toggles-handlers"></div>
           </div>
@@ -315,7 +308,7 @@
           <div class="card">
             <div class="card-head"><h2 data-i18n="Notifications">Notifications</h2></div>
             <div id="toggles-notifications"></div>
-            <p class="small faint" style="margin:10px 0 0" data-i18n="Notifications are delivered by the control bot.">Notifications are delivered by the control bot.</p>
+            <p class="small faint" style="margin:10px 0 0" data-i18n="Notifications arrive in the Inbox. A copy in a private channel of your first account reaches your phone when the panel is closed.">Notifications arrive in the Inbox. A copy in a private channel of your first account reaches your phone when the panel is closed.</p>
           </div>
 
           <div class="card">
@@ -403,18 +396,13 @@
       "Any type": "Любой тип",
       "Anti-delete is off. Turn it on in Settings or with .antidelete on": "Анти-удаление выключено. Включите его в настройках или командой .antidelete on",
       "Database, settings, and modules. Telegram sessions are never included.": "База данных, настройки и модули. Сессии Telegram никогда не включаются.",
-      "The database is not encrypted, so the backup contains your API hash and bot token in plain text. Set a master password to encrypt it.": "База не зашифрована, поэтому в бэкапе API hash и токен бота лежат открытым текстом. Задайте мастер-пароль, чтобы зашифровать её.",
+      "The database is not encrypted, so the backup contains your API hash in plain text. Set a master password to encrypt it.": "База не зашифрована, поэтому в бэкапе API hash лежит открытым текстом. Задайте мастер-пароль, чтобы зашифровать её.",
       "Tip: .backup in Telegram sends a backup to Saved Messages.": "Совет: команда .backup в Telegram отправит бэкап в «Избранное».",
       "Replaces the database, settings, and modules, then restarts. The current database is kept in backups/.": "Заменяет базу, настройки и модули, затем перезапускает. Текущая база сохраняется в backups/.",
       "Restore and restart": "Восстановить и перезапустить",
       "Separate several prefixes with spaces": "Несколько префиксов через пробел",
-      "Bot and message language": "Язык бота и сообщений",
       "Sudo users": "Sudo-пользователи",
       "Telegram user IDs allowed to run safe commands": "ID пользователей Telegram, которым разрешены безопасные команды",
-      "Control bot": "Бот-пульт",
-      "Create a bot with @BotFather, paste its token, then press Start in the bot. Leave empty and save to keep the current token.": "Создайте бота в @BotFather, вставьте токен и нажмите Start в боте. Пустое поле сохраняет текущий токен.",
-      "Remove bot": "Отключить бота",
-      "Notifications are delivered by the control bot.": "Уведомления присылает бот-пульт.",
       "Remove password": "Убрать пароль",
       "Encrypts the database, the default session, and anti-delete storage on disk. You will need it at every start (or put FLY_MASTER_PASSWORD in fly-telegram.env).": "Шифрует на диске базу, основную сессию и архив анти-удаления. Его нужно вводить при каждом запуске (или положить FLY_MASTER_PASSWORD в fly-telegram.env).",
       "Remove encryption": "Снять шифрование",
@@ -437,15 +425,21 @@
       "running": "работает",
       "not configured": "не настроен",
       "token set, not running": "токен задан, не работает",
-      "Bot": "Бот",
       "commands": "команд",
       "errors": "ошибок",
       "modules": "модулей",
       "enabled": "включено",
       "Set a panel password so the panel is not only protected by one-time links.": "Задайте пароль панели, чтобы вход не зависел только от одноразовых ссылок.",
-      "Connect a control bot to get notifications and a menu in Telegram.": "Подключите бота-пульт, чтобы получать уведомления и меню в Telegram.",
       "Your database is stored unencrypted. Set a master password in Settings → Security.": "База хранится без шифрования. Задайте мастер-пароль в Настройки → Безопасность.",
       "Grant permissions": "Выдать разрешения",
+      "Inbox": "Входящие",
+      "Bot": "Бот",
+      "Notifications and questions that need your answer.": "Уведомления и вопросы, которые ждут вашего ответа.",
+      "Mark all as read": "Отметить все прочитанными",
+      "Nothing here yet.": "Пока пусто.",
+      "Message language": "Язык сообщений",
+      "Notifications arrive in the Inbox. A copy in a private channel of your first account reaches your phone when the panel is closed.": "Уведомления приходят во Входящие. Копия в приватном канале первого аккаунта дойдёт до телефона, даже когда панель закрыта.",
+      "errors": "ошибки", "pmguard": "личные сообщения", "startup": "запуск", "anti_delete": "удалённые", "module": "модули", "jobs": "задачи", "permissions": "разрешения",
       "Calls": "Вызовов",
       "Refused": "Отказов",
       "last": "последний",
@@ -467,7 +461,7 @@
       "Disconnected": "Отключено",
       "Automations": "Автоматизации", "Tasks": "Задачи", "Quick actions": "Быстрые действия",
       "Getting started": "Первые шаги", "Hide": "Скрыть", "done": "готово",
-      "Set a panel password": "Задайте пароль панели", "Connect the control bot": "Подключите бота-пульт",
+      "Set a panel password": "Задайте пароль панели",
       "Encrypt your data with a master password": "Зашифруйте данные мастер-паролем",
       "Create your first automation": "Создайте первую автоматизацию", "Pick a theme you like": "Выберите тему по вкусу",
       "Select one or several accounts, then pick an action.": "Выберите один или несколько аккаунтов и действие.",
@@ -704,7 +698,6 @@
       "Log out this account?": "Выйти из этого аккаунта?",
       "Log out signs this account out of Telegram here and deletes its session file.": "Выход завершает сеанс аккаунта в Telegram и удаляет его файл сессии.",
       "Also delete its access key, anti-delete archive, and export rules": "Также удалить ключ доступа, архив анти-удаления и правила экспорта",
-      "Remove the control bot? Its menu and notifications stop until you save a new token.": "Удалить бота-пульт? Меню и уведомления перестанут работать, пока вы не сохраните новый токен.",
       "This combination is risky:": "Это опасное сочетание прав:",
       "Grant it anyway?": "Всё равно выдать?",
       "It can read your secrets and send them to any server.": "Модуль сможет прочитать ваши секреты и отправить их на любой сервер.",
@@ -762,7 +755,7 @@
       $("sidebar").classList.remove("open");
       Fly.store.set("fly.page", page);
       if (location.hash !== `#${page}`) history.replaceState(null, "", `#${page}`);
-      ({ overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: () => { loadAdSettings(); loadDeleted(); }, backups: loadSettings, settings: () => { loadSettings(); loadPremium(); loadDevices(); loadPanelSessions(); } })[page]?.();
+      ({ inbox: loadInbox, overview: loadStatus, accounts: loadAccounts, export: loadExports, recovery: loadRecovery, automations: loadRules, tasks: loadJobs, modules: loadModules, logs: () => loadLogs(true), antidelete: () => { loadAdSettings(); loadDeleted(); }, backups: loadSettings, settings: () => { loadSettings(); loadPremium(); loadDevices(); loadPanelSessions(); } })[page]?.();
     }
     document.querySelectorAll(".nav-item").forEach((el) => el.addEventListener("click", () => showPage(el.dataset.page)));
     $("menu-toggle").addEventListener("click", () => $("sidebar").classList.toggle("open"));
@@ -824,7 +817,7 @@
       $("stat-modules").textContent = `${s.modules_enabled}/${s.module_count} ${Fly.t("modules")} ${Fly.t("enabled")}`;
       $("stat-memory").textContent = Fly.bytes(s.memory_bytes);
       $("stat-cpu").textContent = s.cpu_percent == null ? "" : `CPU ${s.cpu_percent.toFixed(1)}%`;
-      renderBotStatus(s.bot);
+      updateInboxBadge(s.inbox_unread);
       renderChart(s.activity);
       renderTopCommands(s.top_commands, s.prefixes[0]);
       renderAccounts(s.accounts);
@@ -846,7 +839,6 @@
       }
       const items = [
         [settingsData.panel_password_set, "lock", "Set a panel password", "settings"],
-        [s.bot.running, "bot", "Connect the control bot", "settings"],
         [s.db_encrypted, "shield", "Encrypt your data with a master password", "settings"],
         [rulesCount > 0, "bolt", "Create your first automation", "automations"],
         [Fly.store.get("fly.theme", "auto") !== "auto" || Fly.store.get("fly.accent", "") !== "", "palette", "Pick a theme you like", "appearance"],
@@ -865,16 +857,9 @@
     }
     $("checklist-hide").addEventListener("click", () => { Fly.store.set("fly.checklist.hidden", "1"); $("checklist-card").classList.add("hidden"); });
 
-    function renderBotStatus(bot) {
-      $("bot-status").innerHTML = bot.running
-        ? `<span class="dot ok"></span> ${esc(Fly.t("Bot"))} <a href="https://t.me/${esc(bot.username)}" target="_blank" rel="noopener">@${esc(bot.username)}</a>`
-        : `<span class="dot"></span> ${esc(Fly.t("Bot"))}: ${esc(Fly.t("not configured"))}`;
-    }
-
     function renderAlerts(s) {
       const alerts = [];
       if (settingsData && !settingsData.panel_password_set) alerts.push(["warn", "Set a panel password so the panel is not only protected by one-time links.", "settings"]);
-      if (!s.bot.running) alerts.push(["", "Connect a control bot to get notifications and a menu in Telegram.", "settings"]);
       if (!s.db_encrypted) alerts.push(["warn", "Your database is stored unencrypted. Set a master password in Settings → Security.", "settings"]);
       $("alerts").innerHTML = alerts.map(([kind, text, page]) =>
         `<div class="alert ${kind}" role="button" style="cursor:pointer" data-goto="${page}">${esc(Fly.t(text))}</div>`).join("");
@@ -1227,10 +1212,6 @@
       $("panel-pw-state").textContent = Fly.t(s.panel_password_set ? "Panel password is set" : "No panel password: sign in with one-time links");
       $("master-state").textContent = Fly.t(s.db_encrypted ? "Database is encrypted" : "Database is not encrypted");
       $("backup-warning").classList.toggle("hidden", s.db_encrypted);
-      $("bot-badge").innerHTML = s.bot.running
-        ? `<span class="badge ok">@${esc(s.bot.username)} · ${esc(Fly.t("running"))}</span>`
-        : `<span class="badge ${s.bot.configured ? "warn" : ""}">${esc(Fly.t(s.bot.configured ? "token set, not running" : "not configured"))}</span>`;
-      $("remove-bot").classList.toggle("hidden", !s.bot.configured);
       for (const group of ["handlers", "notifications"]) {
         $(`toggles-${group}`).innerHTML = s.toggles.filter((t) => t.group === group).map((t) => `
           <div class="setting-row"><span class="label">${esc(Fly.lang === "ru" ? t.label_ru : t.label_en)}</span>
@@ -1275,15 +1256,6 @@
       language: $("set-language").value,
       sudo_users: $("set-sudo").value.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n)),
     }).catch(() => {}));
-    $("save-bot").addEventListener("click", () => {
-      const token = $("set-bot").value.trim();
-      if (!token) return;
-      saveSettings({ bot_token: token }).then(() => { $("set-bot").value = ""; loadStatus(); }).catch(() => {});
-    });
-    $("remove-bot").addEventListener("click", () => {
-      if (!confirm(Fly.t("Remove the control bot? Its menu and notifications stop until you save a new token."))) return;
-      saveSettings({ bot_token: "" }).then(loadStatus).catch(() => {});
-    });
     $("save-panel-pw").addEventListener("click", () => {
       const pw = $("set-panel-pw").value;
       if (!pw) return;
@@ -2593,11 +2565,83 @@
     }).catch(() => {});
     const initial = location.hash.slice(1) || Fly.store.get("fly.page", "overview");
     showPage(document.getElementById(`page-${initial}`) ? initial : "overview");
+    let inboxEvents = [];
+    let inboxLast = 0;
+    let inboxReadUpTo = 0;
+
+    function updateInboxBadge(count) {
+      $("inbox-badge").textContent = count;
+      $("inbox-badge").classList.toggle("hidden", !count);
+    }
+
+    async function pollInbox() {
+      let page;
+      try { page = await Fly.api(`/api/inbox?after=${inboxLast}`); } catch { return; }
+      inboxReadUpTo = page.read_up_to;
+      updateInboxBadge(page.unread);
+      if (page.events.length) {
+        const fresh = page.events.filter((e) => e.id > inboxLast);
+        inboxEvents = inboxEvents.filter((e) => !page.events.some((n) => n.id === e.id)).concat(page.events);
+        inboxLast = Math.max(inboxLast, ...page.events.map((e) => e.id));
+        if (inboxLast > 0 && fresh.length && document.hidden === false && currentPage !== "inbox" && inboxInitialized) {
+          Fly.toast(fresh[fresh.length - 1].text.split("\n")[0], "ok");
+        }
+      }
+      inboxInitialized = true;
+      if (currentPage === "inbox") renderInbox();
+    }
+    let inboxInitialized = false;
+
+    async function loadInbox() {
+      inboxEvents = [];
+      inboxLast = 0;
+      await pollInbox();
+      renderInbox();
+    }
+
+    function renderInbox() {
+      const list = [...inboxEvents].sort((a, b) => b.id - a.id);
+      $("inbox-list").innerHTML = list.length ? list.map((e) => `
+        <div class="setting-row" style="align-items:flex-start;flex-direction:column;gap:6px">
+          <div class="row between" style="width:100%">
+            <span class="badge ${e.id > inboxReadUpTo ? "info" : ""}">${esc(Fly.t(e.topic))}</span>
+            <span class="small faint">${esc(new Date(e.time * 1000).toLocaleString())}</span>
+          </div>
+          <div style="white-space:pre-wrap;word-break:break-word">${esc(e.text)}</div>
+          ${e.resolved ? `<span class="badge ok">${esc(e.resolved)}</span>` : e.actions.length ? `<div class="row">${e.actions.map((a) =>
+            `<button class="btn btn-sm ${a.danger ? "btn-danger" : "btn-primary"}" data-inbox-event="${e.id}" data-inbox-action="${esc(a.id)}">${esc(a.label)}</button>`).join("")}</div>` : ""}
+        </div>`).join("") : `<p class="muted">${esc(Fly.t("Nothing here yet."))}</p>`;
+      const newest = list[0]?.id || 0;
+      if (newest > inboxReadUpTo) {
+        Fly.api("/api/inbox/read", { body: { up_to: newest } }).then(() => { inboxReadUpTo = newest; updateInboxBadge(0); }).catch(() => {});
+      }
+    }
+
+    $("inbox-list").addEventListener("click", async (e) => {
+      const button = e.target.closest("[data-inbox-action]");
+      if (!button) return;
+      button.disabled = true;
+      try {
+        await Fly.api("/api/inbox/action", { body: { event: Number(button.dataset.inboxEvent), action: button.dataset.inboxAction } });
+      } catch (err) {
+        Fly.toast(err.message, "err");
+      }
+      await loadInbox();
+    });
+    $("inbox-read-all").addEventListener("click", async () => {
+      await Fly.api("/api/inbox/read", { body: { up_to: inboxLast } }).catch(() => {});
+      inboxReadUpTo = inboxLast;
+      updateInboxBadge(0);
+      renderInbox();
+    });
+    pollInbox();
+
     setInterval(() => {
       if (document.hidden) return;
       if (currentPage === "overview") loadStatus();
       if (currentPage === "logs" && $("log-auto").checked) loadLogs(false);
       if (currentPage === "tasks") loadJobs();
+      pollInbox();
     }, 3000);
   </script>
 </body>

@@ -4,6 +4,11 @@
 
 ### New
 
+- **Inbox** in the panel replaces the control bot: module errors, startup, finished tasks,
+  deleted messages, and new private messages with **Allow** and **Block** buttons, with an
+  unread counter. `notify.channel` also posts each notification to a private channel of
+  the first account, so it reaches your phone when the panel is closed.
+
 - **Chat export** (panel, Export): Telegram's official takeout export (Telegram Desktop
   `result.json` and HTML) and an extended export with rich HTML, statistics, a media gallery,
   search, JSON, single-chat PDF with request and completion stamps, and deleted messages from
@@ -90,6 +95,12 @@
 - Self-update refuses a version that isn't newer, requires `sha256sums.txt`, and verifies a
   release signature once `assets/release-signing.pub` holds a key (`docs/RELEASE-SIGNING.md`).
 - Removing the control bot now also ignores a token left in `TELOXIDE_TOKEN`.
+
+### Removed
+
+- The control bot, its token in the setup wizard and Settings, `TELOXIDE_TOKEN`, and the
+  inline help with buttons (`.help` works as before). A saved bot token is deleted from the
+  database on start. The `teloxide` dependency is gone.
 
 ### Changes
 

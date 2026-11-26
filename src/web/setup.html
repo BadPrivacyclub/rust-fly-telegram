@@ -40,7 +40,6 @@
         <p class="muted" style="margin:0" data-i18n="This wizard connects your Telegram account in a few minutes. Everything stays on this computer.">This wizard connects your Telegram account in a few minutes. Everything stays on this computer.</p>
         <ol class="howto">
           <li data-i18n="Protect the panel with a password">Protect the panel with a password</li>
-          <li data-i18n="Optionally connect a control bot">Optionally connect a control bot</li>
           <li data-i18n="Enter your Telegram API keys">Enter your Telegram API keys</li>
           <li data-i18n="Sign in with your phone number">Sign in with your phone number</li>
         </ol>
@@ -61,21 +60,6 @@
           <label for="prefix" data-i18n="Command prefix">Command prefix</label>
           <input id="prefix" class="input" value="." maxlength="12">
           <span class="hint" data-i18n="Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.">Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.</span>
-        </div>
-      </section>
-
-      <section class="step" data-step="bot">
-        <h2 data-i18n="Control bot (optional)">Control bot (optional)</h2>
-        <p class="muted" style="margin:0" data-i18n="A bot sends you notifications and gives you a control menu inside Telegram.">A bot sends you notifications and gives you a control menu inside Telegram.</p>
-        <ol class="howto">
-          <li><span data-i18n="Open">Open</span> <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> <span data-i18n="and send /newbot">and send /newbot</span></li>
-          <li data-i18n="Copy the token it gives you and paste it below">Copy the token it gives you and paste it below</li>
-          <li data-i18n="For help with buttons, also send /setinline to BotFather">For help with buttons, also send /setinline to BotFather</li>
-          <li data-i18n="After setup, press Start in your bot so it can message you">After setup, press Start in your bot so it can message you</li>
-        </ol>
-        <div class="field">
-          <label for="bot-token" data-i18n="Bot token">Bot token</label>
-          <input id="bot-token" class="input mono" placeholder="123456789:AA..." autocomplete="off">
         </div>
       </section>
 
@@ -183,7 +167,6 @@
       "Welcome to fly-telegram": "Добро пожаловать в fly-telegram",
       "This wizard connects your Telegram account in a few minutes. Everything stays on this computer.": "Мастер подключит ваш аккаунт Telegram за пару минут. Все данные остаются на этом компьютере.",
       "Protect the panel with a password": "Задайте пароль панели",
-      "Optionally connect a control bot": "При желании подключите бота-пульт",
       "Enter your Telegram API keys": "Введите API-ключи Telegram",
       "Sign in with your phone number": "Войдите по номеру телефона",
       "You will use it to open this panel. Without a password you can still sign in with a one-time link printed in the console.": "Он нужен для входа в эту панель. Без пароля можно входить по одноразовой ссылке из консоли.",
@@ -191,13 +174,7 @@
       "Repeat password": "Повторите пароль",
       "Command prefix": "Префикс команд",
       "Commands start with this symbol, e.g. .help. Several prefixes can be separated by spaces.": "Команды начинаются с этого символа, например .help. Несколько префиксов пишутся через пробел.",
-      "Control bot (optional)": "Бот-пульт (необязательно)",
-      "A bot sends you notifications and gives you a control menu inside Telegram.": "Бот присылает уведомления и даёт меню управления прямо в Telegram.",
       "Open": "Откройте",
-      "and send /newbot": "и отправьте /newbot",
-      "Copy the token it gives you and paste it below": "Скопируйте выданный токен и вставьте ниже",
-      "For help with buttons, also send /setinline to BotFather": "Для справки с кнопками отправьте BotFather ещё /setinline",
-      "After setup, press Start in your bot so it can message you": "После настройки нажмите Start в своём боте, чтобы он мог вам писать",
       "Telegram API keys": "API-ключи Telegram",
       "and sign in": "и войдите",
       "Create an application (any name)": "Создайте приложение (название любое)",
@@ -236,7 +213,7 @@
 
     const $ = (id) => document.getElementById(id);
     let mode = "setup";
-    let steps = ["welcome", "panel", "bot", "api", "phone", "code", "done"];
+    let steps = ["welcome", "panel", "api", "phone", "code", "done"];
     let index = 0;
     let needPassword = false;
     let busy = false;
@@ -263,12 +240,12 @@
       document.querySelectorAll(".step").forEach((el) => el.classList.toggle("active", el.dataset.step === current));
       $("progress").innerHTML = steps.slice(0, -1).map((_, i) => `<div class="${i <= index ? "done" : ""}"></div>`).join("");
       $("back").style.visibility = index === 0 || current === "done" || current === "code" && busy ? "hidden" : "visible";
-      $("skip").classList.toggle("hidden", !(current === "panel" || current === "bot"));
+      $("skip").classList.toggle("hidden", current !== "panel");
       $("next").classList.toggle("hidden", current === "done");
       const labels = { phone: "Send code", code: "Sign in" };
       $("next").textContent = Fly.t(labels[current] || "Next");
       $("next").disabled = busy;
-      const focus = { panel: "pw1", bot: "bot-token", api: "api-id", phone: "phone", code: needPassword ? "password2fa" : "code" }[current];
+      const focus = { panel: "pw1", api: "api-id", phone: "phone", code: needPassword ? "password2fa" : "code" }[current];
       if (focus) setTimeout(() => $(focus).focus(), 30);
     }
 
@@ -289,12 +266,6 @@
         }
         return withBusy(async () => {
           await Fly.api("/api/setup/prefs", { body: { panel_password: pw1 || null, prefix: $("prefix").value, language: Fly.lang } });
-          index++;
-        });
-      }
-      if (current === "bot" && !skip && $("bot-token").value.trim()) {
-        return withBusy(async () => {
-          await Fly.api("/api/setup/prefs", { body: { bot_token: $("bot-token").value.trim() } });
           index++;
         });
       }
@@ -432,7 +403,6 @@
         } else {
           $("session-field").classList.add("hidden");
           if (state.panel_password_set) steps = steps.filter((s) => s !== "panel");
-          if (state.bot_configured) steps = steps.filter((s) => s !== "bot");
         }
       } catch (e) {
         showError(e.message);

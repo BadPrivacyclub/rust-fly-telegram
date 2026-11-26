@@ -13,11 +13,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use grammers_client::message::InputMessage;
-use grammers_client::tl;
 use grammers_client::update::Message;
 use grammers_client::Client;
 use grammers_mtsender::InvocationError;
-use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -38,24 +36,7 @@ const COPY_LIMIT: usize = 1200;
 const CARD_MARK: &str = "🗑";
 const CLEANUP_SCAN: usize = 3000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArchiveChannel {
-    pub channel_id: i64,
-    pub access_hash: i64,
-}
-
-impl ArchiveChannel {
-    pub fn peer_ref(&self) -> Option<PeerRef> {
-        Some(PeerRef {
-            id: PeerId::channel(self.channel_id)?,
-            auth: PeerAuth::from_hash(self.access_hash),
-        })
-    }
-
-    pub fn link(channel_id: i64, message_id: i64) -> String {
-        format!("https://t.me/c/{channel_id}/{message_id}")
-    }
-}
+pub use crate::private_channel::PrivateChannel as ArchiveChannel;
 
 /// Where a deleted message lives in the archive channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +57,7 @@ fn channel_key(account_id: &str) -> String {
 }
 
 pub async fn stored_channel(db: &Database, account_id: &str) -> Option<ArchiveChannel> {
-    serde_json::from_value(db.get(&channel_key(account_id)).await).ok()
+    crate::private_channel::stored(db, &channel_key(account_id)).await
 }
 
 /// The key I use for a message: channel messages have their own numbering.
@@ -137,80 +118,18 @@ impl Archive {
             Lang::Ru => "Архив удалённых сообщений fly-telegram. Ищите по хештегам: #deleted, #photo, #user123…",
             Lang::En => "fly-telegram archive of deleted messages. Search by hashtag: #deleted, #photo, #user123…",
         };
-        let updates = self
-            .client
-            .invoke(&tl::functions::channels::CreateChannel {
-                broadcast: true,
-                megagroup: false,
-                for_import: false,
-                forum: false,
-                title: CHANNEL_TITLE.into(),
-                about: about.into(),
-                geo_point: None,
-                address: None,
-                ttl_period: None,
-            })
-            .await
-            .context("creating the archive channel")?;
-        let chats = match &updates {
-            tl::enums::Updates::Updates(u) => u.chats.clone(),
-            tl::enums::Updates::Combined(u) => u.chats.clone(),
-            _ => Vec::new(),
-        };
-        let channel = chats
-            .iter()
-            .find_map(|chat| match chat {
-                tl::enums::Chat::Channel(c) => c.access_hash.map(|hash| ArchiveChannel {
-                    channel_id: c.id,
-                    access_hash: hash,
-                }),
-                _ => None,
-            })
-            .context("Telegram did not return the archive channel")?;
-        self.db
-            .set(
-                channel_key(&self.account.id),
-                serde_json::to_value(channel)?,
-            )
-            .await?;
-        self.tuck_away(channel).await;
+        let channel = crate::private_channel::ensure(
+            &self.client,
+            &self.db,
+            &channel_key(&self.account.id),
+            CHANNEL_TITLE,
+            about,
+            true,
+        )
+        .await
+        .context("creating the archive channel")?;
         *slot = Some(channel);
         Ok(channel)
-    }
-
-    async fn tuck_away(&self, channel: ArchiveChannel) {
-        let peer = tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
-            channel_id: channel.channel_id,
-            access_hash: channel.access_hash,
-        });
-        let _ = self
-            .client
-            .invoke(&tl::functions::folders::EditPeerFolders {
-                folder_peers: vec![tl::enums::InputFolderPeer::Peer(
-                    tl::types::InputFolderPeer {
-                        peer: peer.clone(),
-                        folder_id: 1,
-                    },
-                )],
-            })
-            .await;
-        let _ = self
-            .client
-            .invoke(&tl::functions::account::UpdateNotifySettings {
-                peer: tl::enums::InputNotifyPeer::Peer(tl::types::InputNotifyPeer { peer }),
-                settings: tl::enums::InputPeerNotifySettings::Settings(
-                    tl::types::InputPeerNotifySettings {
-                        show_previews: None,
-                        silent: None,
-                        mute_until: Some(i32::MAX),
-                        sound: None,
-                        stories_muted: None,
-                        stories_hide_sender: None,
-                        stories_sound: None,
-                    },
-                ),
-            })
-            .await;
     }
 
     async fn remember(&self, key: Key, copy: Copy) {

@@ -144,10 +144,6 @@ impl LogBuffer {
         }
         records
     }
-
-    pub fn recent_errors(&self, limit: usize) -> Vec<LogRecord> {
-        self.since(0, Some(Level::WARN), limit)
-    }
 }
 
 pub struct BufferLayer {

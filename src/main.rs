@@ -11,7 +11,6 @@ mod anti_delete;
 mod app;
 mod automations;
 mod backup;
-mod bot;
 mod bundled;
 mod client;
 mod config;
@@ -29,6 +28,7 @@ mod logs;
 mod notify;
 mod persona;
 mod premium;
+mod private_channel;
 mod recovery;
 mod restart;
 mod runtime;
@@ -124,6 +124,9 @@ async fn run() -> Result<()> {
     let db = Arc::new(
         Database::load_with_state(config::DATABASE_FILE, Arc::clone(&security_state)).await?,
     );
+    if let Err(error) = core_settings::forget_bot_token(&db).await {
+        tracing::warn!("could not remove the old bot token: {error}");
+    }
     let proxy_url = db.get(config::db_key::PROXY_URL).await;
     loader::http::set_proxy(proxy_url.as_str().unwrap_or_default());
     let runtime = RuntimeState::new();
@@ -155,18 +158,12 @@ async fn run() -> Result<()> {
         });
     }
 
-    // I run the control bot beside the userbot; a missing or bad token only disables it.
-    let bot_manager = bot::BotManager::new(Arc::clone(&loader));
-    bot_manager.restart().await;
-
     let run_result = client::run(client::RunOptions {
         services: Arc::clone(&services),
         loader: Arc::clone(&loader),
-        bot: Arc::clone(&bot_manager),
         browser_setup: !cli.no_web_auth,
     })
     .await;
-    bot_manager.stop().await;
     let seal_result = session_security.seal().await;
 
     run_result?;

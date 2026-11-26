@@ -136,7 +136,6 @@ pub async fn status(State(state): State<AppState>) -> Response {
     let loader = try_loader!(state);
     let runtime = &state.services.runtime;
     let summaries = loader.summaries().await;
-    let bot_username = state.services.notifier.bot_username().await;
     let body = json!({
         "version": crate::VERSION,
         "target": crate::updater::TARGET,
@@ -155,7 +154,7 @@ pub async fn status(State(state): State<AppState>) -> Response {
         "modules_enabled": summaries.iter().filter(|m| m.enabled).count(),
         "modules_sandboxed": summaries.iter().filter(|m| !m.info.trusted).count(),
         "db_encrypted": state.db().encryption_enabled().await,
-        "bot": { "running": bot_username.is_some(), "username": bot_username },
+        "inbox_unread": state.services.notifier.page(u64::MAX).unread,
         "prefixes": core_settings::prefixes(state.db()).await,
         "source_checkout": crate::updater::is_source_checkout(),
         "jobs_running": state.services.jobs.running().await,
@@ -454,18 +453,12 @@ pub async fn settings(State(state): State<AppState>) -> Response {
             "group": if key.starts_with("notify.") { "notifications" } else { "handlers" },
         }));
     }
-    let bot_username = state.services.notifier.bot_username().await;
     Json(json!({
         "prefixes": core_settings::prefixes(db).await,
         "language": core_settings::language(db).await.code(),
         "proxy_url": db.get(db_key::PROXY_URL).await.as_str().unwrap_or_default(),
         "db_encrypted": db.encryption_enabled().await,
         "panel_password_set": auth::password_is_set(db).await,
-        "bot": {
-            "configured": core_settings::bot_token(db).await.is_some(),
-            "running": bot_username.is_some(),
-            "username": bot_username,
-        },
         "sudo_users": core_settings::sudo_users(db).await,
         "toggles": toggles,
         "web": { "host": state.services.config.web.host, "port": state.services.config.web.port },
@@ -479,7 +472,6 @@ pub struct SettingsUpdate {
     prefixes: Option<Vec<String>>,
     language: Option<String>,
     proxy_url: Option<String>,
-    bot_token: Option<String>,
     toggles: Option<serde_json::Map<String, Value>>,
     sudo_users: Option<Vec<i64>>,
     panel_password: Option<String>,
@@ -551,32 +543,6 @@ pub async fn update_settings(
             .panel_auth
             .revoke_others(current.as_deref())
             .await;
-    }
-
-    if let Some(token) = &body.bot_token {
-        let token = token.trim();
-        if token.is_empty() {
-            let removed = match &state.bot {
-                Some(bot) => bot.remove().await,
-                None => core_settings::remove_bot_token(db).await,
-            };
-            if let Err(error) = removed {
-                return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
-            }
-        } else {
-            if let Err(error) = crate::bot::validate_token(token).await {
-                return api_error(
-                    StatusCode::BAD_REQUEST,
-                    format!("Telegram rejected the bot token: {error}"),
-                );
-            }
-            if let Err(error) = core_settings::set_bot_token(db, token).await {
-                return api_error(StatusCode::INTERNAL_SERVER_ERROR, error);
-            }
-            if let Some(bot) = &state.bot {
-                bot.restart().await;
-            }
-        }
     }
 
     let next_master = if body.clear_master_password {
