@@ -446,6 +446,10 @@
       "Connect a control bot to get notifications and a menu in Telegram.": "Подключите бота-пульт, чтобы получать уведомления и меню в Telegram.",
       "Your database is stored unencrypted. Set a master password in Settings → Security.": "База хранится без шифрования. Задайте мастер-пароль в Настройки → Безопасность.",
       "Grant permissions": "Выдать разрешения",
+      "Calls": "Вызовов",
+      "Refused": "Отказов",
+      "last": "последний",
+      "Calls and refusals since the start, for sandboxed modules.": "Вызовы и отказы с момента запуска, для модулей в песочнице.",
       "Dangerous: gives control over this computer or your account": "Опасно: даёт контроль над этим компьютером или аккаунтом",
       "events": "события",
       "bundled": "встроенный",
@@ -1074,10 +1078,14 @@
       const form = document.createElement("form");
       form.className = "stack";
       const requested = new Set(module.audit);
+      const usage = (p) => (module.usage || []).filter((u) => u.permission === p).map((u) =>
+        `<span class="small ${u.allowed ? "faint" : "err"}">${esc(Fly.t(u.allowed ? "Calls" : "Refused"))}: ${u.count}, ${esc(Fly.t("last"))} ${esc(new Date(u.last * 1000).toLocaleString())}</span>`).join(" ");
       form.innerHTML = `<div class="perm-grid">${PERMISSIONS.map((p) => `
         <label><input type="checkbox" value="${p}" ${module.permissions.includes(p) ? "checked" : ""}>
           <code>${p}</code>${requested.has(p) ? ` <span class="badge info">used</span>` : ""}
-          ${DANGEROUS.includes(p) ? ` <span class="badge err" title="${esc(Fly.t("Dangerous: gives control over this computer or your account"))}">!</span>` : ""}</label>`).join("")}</div>
+          ${DANGEROUS.includes(p) ? ` <span class="badge err" title="${esc(Fly.t("Dangerous: gives control over this computer or your account"))}">!</span>` : ""}
+          ${usage(p)}</label>`).join("")}</div>
+        ${module.trusted ? "" : `<p class="small faint" style="margin:0">${esc(Fly.t("Calls and refusals since the start, for sandboxed modules."))}</p>`}
         <p class="small faint" style="margin:0">${esc(Fly.t("Dangerous: gives control over this computer or your account"))}: ${DANGEROUS.join(", ")}</p>
         <div class="row"><button class="btn btn-primary" type="submit">${esc(Fly.t("Save"))}</button></div>`;
       form.addEventListener("submit", async (e) => {

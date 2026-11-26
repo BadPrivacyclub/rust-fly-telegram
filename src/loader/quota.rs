@@ -94,3 +94,84 @@ mod tests {
         assert!(limiter.take_at("m", Action::Message, later).is_err());
     }
 }
+
+/// How often a sandboxed module used each permission, and how often it was refused one it
+/// lacks, since the start. Shown in the panel next to the permissions.
+#[derive(Default)]
+pub struct UsageLog {
+    entries: Mutex<HashMap<(String, String, bool), UsageEntry>>,
+}
+
+#[derive(Clone, Copy)]
+struct UsageEntry {
+    count: u64,
+    last: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+pub struct PermissionUse {
+    pub permission: String,
+    pub allowed: bool,
+    pub count: u64,
+    /// Unix time of the last use, in seconds.
+    pub last: u64,
+}
+
+impl UsageLog {
+    pub fn record(&self, module: &str, permission: &str, allowed: bool) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = entries
+            .entry((module.to_string(), permission.to_string(), allowed))
+            .or_insert(UsageEntry { count: 0, last: 0 });
+        entry.count += 1;
+        entry.last = now;
+    }
+
+    pub fn for_module(&self, module: &str) -> Vec<PermissionUse> {
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut uses = entries
+            .iter()
+            .filter(|((name, _, _), _)| name == module)
+            .map(|((_, permission, allowed), entry)| PermissionUse {
+                permission: permission.clone(),
+                allowed: *allowed,
+                count: entry.count,
+                last: entry.last,
+            })
+            .collect::<Vec<_>>();
+        uses.sort_by(|a, b| {
+            a.permission
+                .cmp(&b.permission)
+                .then(b.allowed.cmp(&a.allowed))
+        });
+        uses
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn uses_are_counted_per_module_permission_and_outcome() {
+        let log = UsageLog::default();
+        log.record("m", "network", true);
+        log.record("m", "network", true);
+        log.record("m", "shell", false);
+        log.record("other", "network", true);
+        let uses = log.for_module("m");
+        assert_eq!(uses.len(), 2);
+        assert_eq!(
+            (uses[0].permission.as_str(), uses[0].allowed, uses[0].count),
+            ("network", true, 2)
+        );
+        assert_eq!(
+            (uses[1].permission.as_str(), uses[1].allowed, uses[1].count),
+            ("shell", false, 1)
+        );
+        assert!(uses[0].last > 0);
+    }
+}

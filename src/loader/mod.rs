@@ -69,6 +69,8 @@ pub struct ModuleSummary {
     pub help: ModuleHelp,
     pub config: Vec<ConfigEntry>,
     pub events: bool,
+    /// Permission checks of a sandboxed module since the start.
+    pub usage: Vec<quota::PermissionUse>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -126,6 +128,7 @@ pub struct Loader {
     verifying_key: Option<VerifyingKey>,
     ui: Table,
     pub(crate) rate: quota::RateLimiter,
+    pub(crate) usage: quota::UsageLog,
 }
 
 impl Loader {
@@ -144,6 +147,7 @@ impl Loader {
             verifying_key,
             ui,
             rate: quota::RateLimiter::default(),
+            usage: quota::UsageLog::default(),
         };
         loader.refresh_premium().await?;
         Ok(loader)
@@ -395,6 +399,7 @@ impl Loader {
                 help: module.help.clone(),
                 config,
                 events: module.has_on_message,
+                usage: self.usage.for_module(name),
             });
         }
         summaries.sort_by(|a, b| {

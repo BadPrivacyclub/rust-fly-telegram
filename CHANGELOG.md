@@ -64,6 +64,8 @@
   receive what you type after it. Before, the choice depended on map order.
 - Every sandboxed module runs in a Lua state of its own, limited to 64 MiB. A module that
   runs out of memory no longer affects other modules, and sandboxed modules run in parallel.
+- Modules, Permissions shows how often a sandboxed module used each permission since the
+  start, how often it was refused one it lacks, and when.
 - `string.dump` is gone from the shared `string` table, so `("").dump` no longer reaches it
   from the sandbox.
 - Login links keep their token in the URL fragment (`/auth#t=...`), so it never reaches a request

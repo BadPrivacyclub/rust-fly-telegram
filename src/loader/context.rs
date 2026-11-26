@@ -106,7 +106,13 @@ impl Ctx {
     }
 
     fn require_permission(&self, permission: &str) -> mlua::Result<()> {
-        if self.has_permission(permission) {
+        let allowed = self.has_permission(permission);
+        if !self.trusted {
+            self.loader
+                .usage
+                .record(&self.module_name, permission, allowed);
+        }
+        if allowed {
             Ok(())
         } else {
             Err(mlua::Error::runtime(format!(
